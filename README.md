@@ -4,3 +4,6 @@ Each week the slides will be uploaded after the lecture along with any materials
 The content is organized in separate folders for each lecture. If you have questions, send me an email!
 
 Lecture 1: 18.09.2025
+Lecture 2: 25.09.2025
+Lecture 3: 02.10.2025
+Lecture 4: 09.10.2025
