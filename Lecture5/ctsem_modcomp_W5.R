@@ -5,16 +5,25 @@
 #############################
 
 # install package if it is missing
-if (!requireNamespace(c("ggplot2","patchwork"), quietly = TRUE)) {
-  install.packages(c("ggplot2","patchwork"))
+if (!requireNamespace(c("ggplot2","patchwork","curl","parallel"), quietly = TRUE)) {
+  install.packages(c("ggplot2","patchwork","curl","parallel"))
 }
 
 library(ggplot2) # for making plots
 library(ctsem) # load ctsem for modeling
 library(patchwork) # for stiching plots together
+library(curl)
+library(parallel) # load package to detect cores
 
-# change to your data repository
-data = readRDS("~\\UZH\\Course\\Data\\groundtruth_w5.rds") # load data
+# link to data on github
+url <- "https://raw.githubusercontent.com/mearistodemou/dynamic-systems-uzh/main/Lecture5/groundtruth_w5.rds"
+
+# functions to load data from R
+con <- gzcon(curl::curl(url, "rb"))
+on.exit(close(con), add = TRUE)
+
+data <- readRDS(con) # load file
+
 
 ################################
 # Specify four competing models
@@ -111,7 +120,6 @@ ct_indicator <- ctModel( #define the ctsem model
 # Fit competing models
 ###############################
 
-library(parallel) # load package to detect cores
 ncore = detectCores() # detect number of cores (to speed-up computation)
 
 # fit model 1: unidirectional
@@ -169,8 +177,8 @@ aic_tbl <- data.frame(
 
 # Sort by AIC (lower is better), add deltaAIC and Akaike weights
 aic_tbl <- aic_tbl[order(aic_tbl$AIC), ]
-aic_tbl$deltaAIC      <- aic_tbl$AIC - min(aic_tbl$AIC, na.rm = TRUE)
-aic_tbl$akaikeWeight  <- with(aic_tbl, exp(-0.5 * deltaAIC) / sum(exp(-0.5 * deltaAIC)))
+aic_tbl$deltaAIC <- aic_tbl$AIC - min(aic_tbl$AIC, na.rm = TRUE)
+aic_tbl$akaikeWeight <- with(aic_tbl, exp(-0.5 * deltaAIC) / sum(exp(-0.5 * deltaAIC)))
 
 print(aic_tbl) # print table in output terminal
 
