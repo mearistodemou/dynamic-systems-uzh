@@ -16,7 +16,7 @@ library(curl)
 library(parallel) # load package to detect cores
 
 # link to data on github
-url <- "https://raw.githubusercontent.com/mearistodemou/dynamic-systems-uzh/main/Lecture5/groundtruth_w5.rds"
+url <- "https://raw.githubusercontent.com/mearistodemou/dynamic-systems-uzh/main/Lecture6/groundtruth_w6.rds"
 
 # functions to load data from R
 con <- gzcon(curl::curl(url, "rb"))
