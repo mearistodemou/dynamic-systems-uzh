@@ -1,7 +1,7 @@
 ####################################################
 # Adding a time-independent moderator
 # Michael E. Aristodemou
-# Week 6: 23.10.2025
+# Week 7: 30.10.2025
 ####################################################
 
 # install package if it is missing
