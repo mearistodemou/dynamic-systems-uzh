@@ -16,3 +16,5 @@ Lecture 5: 16.10.2025
 Lecture 6: 23.10.2025
 
 Lecture 7: 30.10.2025
+
+Lecture 8: 06.11.2025
