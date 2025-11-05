@@ -1,7 +1,7 @@
 ######################################################
 # Adding a time-dependent threshold as a moderator
 # Michael E. Aristodemou
-# Week 7: 06.11.2025
+# Week 8: 06.11.2025
 ######################################################
 
 # install package if it is missing
@@ -90,4 +90,5 @@ p = ggplot(data[data$Subject==2,], # Plot the data for all couples
   geom_point() +
   theme_bw()+
   theme(legend.position = "none")
+
 
