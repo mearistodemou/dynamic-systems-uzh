@@ -1,0 +1,492 @@
+---
+title: "Evaluating if proteins cause Kirki's itch"
+author: "Michael E. Aristodemou"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+execute:
+  echo: true
+  warning: false
+  message: false
+editor: visual
+---
+
+```{r}
+ #| label: setup 
+ #| include: false
+ set.seed(123) 
+ knitr::opts_chunk$set(fig.width = 8, fig.height = 6, dpi = 300)
+```
+
+## Case study: Evaluation of an elimination trial
+
+Meet Kirki, my dog, who has been scratching compulsively and has irritated (red) skin.
+
+A vet comes over, examines her, and concludes that this looks like an allergic reaction, which 80% of the time is a response to some proteins. Kirki needs to go on an **elimination diet** to get rid of the offending allergens.
+
+I buy an expensive hypoallergenic food and start Kirki on her new diet. She happily eats it (she will eat just about anything). But a week later, her itch is *worse* and her skin is even more irritated.
+
+Just as I’m thinking of calling the vet, Kirki happily places her snout on the couch and drops a **flower petal**. I go out to the balcony and notice that she’s been secretly snacking on the **lavender plant** — which is toxic for dogs and can cause skin irritation and itching.
+
+So I remove the lavender and continue the diet.
+
+On our walks, I notice a dog owner throwing snacks on the ground to motivate their old dog to move. Of course, Kirki has been indulging in these free snacks during our walks.
+
+**Decision question** Can I trust the conclusions of this elimination diet right now? The “diet evaluation deadline” is in a week.
+
+In this exercise, we will turn this story into a **dynamic system**:
+
+-   latent allergen levels in Kirki’s body
+
+-   different **inputs** (protein food, lavender, random snacks)
+
+-   a latent **urge to scratch**
+
+-   an observable **scratching** outcome
+
+We’ll simulate the system and visualize how these hidden processes evolve over time — and look explicitly at the **measurement link** between the latent urge and observed scratching.
+
+## 1. Packages and basic setup
+
+```{r}
+#| label: packages
+#| message: false
+#| warning: false
+
+if (!requireNamespace(c("ggplot2","dplyr","tidyr"), quietly = TRUE)) {
+install.packages(c("ggplot2","dplyr","tidyr"))
+}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+```
+
+We’ll work with one dog (Kirki) over a series of time points.
+
+```{r}
+#| label: time-grid
+
+NSubjects <- 1                              # only 1 dog: Kirki
+times     <- seq(from = 0, to = 200, by = 1)  # time in days
+Nobs      <- length(times)                  # number of observations per subject
+
+Nsteps <- 100                               # internal time steps between observations
+
+```
+
+## 2. Translating the story into parameters
+
+### Allergens and background
+
+```{r}
+#| label: params-allergens
+
+# Allergens
+A1 <- -0.05   # natural decay rate of allergen levels (negative: they decay)
+G  <- 0       # system noise on allergen levels (0 for now to keep things simple)
+
+```
+
+### Protein food (baseline input) and elimination diet
+
+Kirki starts with regular protein food that brings allergens into the system. Then we introduce an **elimination diet** after a quarter of the time window.
+
+```{r}
+#| label: params-diet
+
+# Eating protein food (baseline)
+
+Pinput <- 3    # constant input of allergens from food
+
+# Elimination diet (intervention)
+
+Pelim     <- -3   # size of change in input at intervention time
+inputTime <- times[ceiling(length(times) / 4)]  # intervention after ~1/4 of the time window
+AM        <- 0    # natural decay of intervention effect (kept 0 here = constant effect)
+
+```
+
+### Lavender consumption
+
+Kirki secretly eats lavender for a while, increasing toxin-related allergens.
+
+```{r}
+#| label: params-lavender
+
+Linput <- 4     # amount of allergens from lavender
+Al     <- 0.05  # accumulation of lavender toxins over repeated eating
+
+lavStart <- times[ceiling(length(times) / 3.5)]  # start ~1/3.5 of time window
+lavEnd   <- times[floor(length(times)  / 3)]     # end ~1/3 of time window
+
+```
+
+### Random snacks during walks
+
+On walks, Kirki sometimes picks up random snacks. We model this as a random process plus an **absorption rate**: the latent input `InputState` does not instantly jump to the snack level, but moves towards it at rate `k`.
+
+```{r}
+#| label: params-snacks
+
+Walks <- 6     # increases probability of snacking (e.g. more walks to the park)
+
+# Sample from a binomial distribution with prob based on number of walks
+
+snacking <- lapply(Walks, function(t) rbinom(n = Nobs, size = 1, prob = t / 20))
+
+# Compute the average amount of snacking across days (diagnostic)
+
+snack_mean <- sapply(snacking, mean)
+
+# scale effect of snacking
+
+AS <- 1   # amount of protein intake
+k  <- 10  # absorption rate (how fast InputState moves towards snack level)
+
+
+```
+
+### Urge to scratch and observed scratching
+
+We’ll assume that the **urge to scratch** is driven by changes in allergen levels, and scratching is an observable binary outcome (0 = no scratch, 1 = scratch).
+
+```{r}
+#| label: params-urge
+
+AEffect <- 1    # effect of allergen amount on urge to scratch
+G_urge  <- 50   # random fluctuations in urge to scratch
+
+# Scratching (measurement model)
+
+alpha0 <- -10   # baseline log-odds
+alpha1 <- 0.6   # effect of UrgeState on log-odds of scratching
+
+
+```
+
+### Initial allergen state
+
+```{r}
+#| label: params-initial
+
+initialAllergen <- rnorm(n = NSubjects, mean = 0, sd = 0)
+
+```
+
+## 3. Exercise: Inspect and tweak parameters
+
+You can use this chunk to run small experiments: change values and re-run.
+
+```{r}
+#| label: exercise-params
+#| exercise: true
+#| exercise.eval: false
+#| echo: true
+
+# Try:
+
+# - making Pelim more negative (stronger diet)
+
+# - changing Linput (how toxic lavender is)
+
+# - changing Walks (how often random snacks are picked up)
+
+# - changing k (how quickly protein input responds to snacking)
+
+Pelim  <- -3
+Linput <- 4
+Walks  <- 6
+k      <- 10
+
+
+```
+
+## 4. Simulating the dynamic system
+
+We build a data frame to store latent states and observed data.
+
+```{r}
+#| label: data-frame-init
+
+data <- data.frame(
+Subject       = rep(NA, NSubjects * Nobs),
+Time          = rep(NA, NSubjects * Nobs),
+Allergen      = rep(NA, NSubjects * Nobs),
+Urge          = rep(NA, NSubjects * Nobs),
+InputState    = rep(NA, NSubjects * Nobs),
+LavenderState = rep(NA, NSubjects * Nobs),
+Snack         = rep(NA, NSubjects * Nobs),
+Scratch       = rep(NA, NSubjects * Nobs),
+probScratch   = rep(NA, NSubjects * Nobs),
+Input         = rep(NA, NSubjects * Nobs),
+LavInput      = rep(NA, NSubjects * Nobs)
+)
+
+
+```
+
+Now the core simulation loop:
+
+```{r}
+#| label: simulate
+#| cache: true
+
+row <- 0
+
+for (subi in 1:NSubjects) {
+for (obsi in 1:Nobs) { # for each observation of a subject
+row <- row + 1
+snack_val <- snacking[[subi]][obsi]
+
+if (obsi == 1) {
+  # Initial states
+  AllergenState <- initialAllergen[subi]
+  InputState    <- Pinput      # latent input process (protein)
+  LavenderState <- 0           # latent toxin process
+  UrgeState     <- 0           # latent urge process
+  pScratch      <- plogis(alpha0 + alpha1 * UrgeState)
+}
+
+if (obsi > 1) {
+  # compute new states by taking Nsteps small steps between observations
+  for (stepi in 1:Nsteps) {
+
+    # --- Input (diet + snacks) ---
+    dInput    <- AM * InputState          # general intervention dynamics
+    dLavender <- Al * LavenderState       # lavender accumulation
+
+    # snack absorption: InputState moves towards AS * snack_val with rate k
+    if (times[obsi] > inputTime) {
+      dSnack <- k * (AS * snack_val - InputState)
+    } else {
+      dSnack <- 0
+    }
+
+    # Apply discrete events
+    if (times[obsi] == inputTime) dInput    <- dInput    + Pelim
+    if (times[obsi] == lavStart) dLavender <- dLavender + Linput
+    if (times[obsi] >= lavEnd)   dLavender <- dLavender * -5
+
+    # Update states
+    InputState    <- InputState    + dInput    * 1 / Nsteps + dSnack * 1 / Nsteps
+    LavenderState <- LavenderState + dLavender * 1 / Nsteps
+
+    # --- Allergen dynamics ---
+    dAllergen <- A1 * AllergenState + InputState + LavenderState
+    AllergenState <- AllergenState +
+      dAllergen * 1 / Nsteps +
+      G * rnorm(n = 1, mean = 0, sd = sqrt(1 / Nsteps))
+
+    # --- Urge dynamics ---
+    dUrge <- dAllergen  # urge responds to change in allergen
+    UrgeState <- AllergenState +
+      dUrge * 1 / Nsteps +
+      G_urge * rnorm(n = 1, mean = 0, sd = sqrt(1 / Nsteps))
+
+    # Probability of scratching at this fine time step
+    pScratch <- plogis(alpha0 + alpha1 * UrgeState)
+  }
+}
+
+# Store at the observed time point
+data$Allergen[row]      <- AllergenState
+data$Urge[row]          <- UrgeState
+data$Time[row]          <- times[obsi]
+data$Subject[row]       <- subi
+data$InputState[row]    <- InputState
+data$LavenderState[row] <- LavenderState
+data$Snack[row]         <- snack_val
+data$Scratch[row]       <- rbinom(1, size = 1, prob = pScratch)
+data$probScratch[row]   <- pScratch
+
+# indicator variables for events (vectorised each loop, but final result is correct)
+data$Input   <- ifelse(data$Time == inputTime, 1, 0)  # elimination diet
+data$LavInput <- ifelse(data$Time == lavStart, 1, 0)  # lavender consumption starts
+
+}
+}
+
+```
+
+## 5. Visualizing latent and observed processes
+
+We pivot the data and plot several time series:
+
+-   **Allergen** (latent total allergen level)
+
+-   **Protein / Snack Input** (`InputState`)
+
+-   **Lavender Toxins** (`LavenderState`)
+
+-   **Urge to Scratch** (`Urge`)
+
+-   **Scratching** (`Scratch`, 0/1)
+
+```{r}
+#| label: plot-data-prep
+
+plot_data <- data %>%
+select(Subject, Time, Allergen, InputState, LavenderState, Urge, Scratch) %>%
+pivot_longer(
+c(Allergen, InputState, LavenderState, Urge, Scratch),
+names_to  = "Series",
+values_to = "Value"
+)
+
+#| label: plot-series
+#| fig-cap: "Latent processes and observed scratching over time for Kirki."
+
+p1 <- ggplot(plot_data, aes(x = Time, y = Value, color = Series)) +
+geom_line(size = 1) +
+geom_point(size = 0.5) +
+facet_grid(
+rows = vars(Series),
+scales = "free_y",
+labeller = as_labeller(c(
+Urge          = "Urge to Scratch",
+Scratch       = "Scratching (0/1)",
+Allergen      = "Allergen Level",
+InputState    = "Protein / Snack Input",
+LavenderState = "Lavender Toxins"
+))
+) +
+geom_vline(xintercept = inputTime, linetype = "dashed") +
+geom_vline(xintercept = lavStart,  linetype = "dotted") +
+geom_vline(xintercept = lavEnd,    linetype = "dotted") +
+theme_bw() +
+labs(
+x     = "Time (Days)",
+y     = NULL,
+color = "Variable"
+)
+
+p1
+```
+
+## 6. Exercise: relate the plot to the story
+
+```         
+#| label: exercise-interpret
+#| exercise: true
+#| exercise.eval: false
+
+# 1. Find the time when the elimination diet starts (dashed line).
+
+# - What happens to InputState after this time?
+
+# - Does scratching immediately go down?
+
+# 2. Between lavStart and lavEnd (dotted lines):
+
+# - What happens to LavenderState?
+
+# - How does this affect Allergen and Urge?
+
+# 3. After lavEnd:
+
+# - LavenderState drops. Does scratching drop immediately?
+
+- How could this delay affect our trust in the elimination diet results?
+
+4. How does changing k (absorption rate) change the shape of InputState
+and the timing of changes in Allergen and scratching?
+
+# Write your thoughts here as comments, then re-run or re-knit.
+```
+
+## 7. Measurement link: from latent urge to observed scratching
+
+Now we make the **measurement model** explicit: how the latent urge maps to the probability of scratching via a logistic function.
+
+```{r}
+#| label: plot-measurement-link
+#| fig-cap: "Relationship between latent urge and probability of scratching."
+
+p_rel <- ggplot(data, aes(x = Urge, y = probScratch)) +
+geom_jitter(height = 0.05, width = 0, alpha = 0.4) +   # raw probabilities
+geom_smooth(
+method      = "glm",
+method.args = list(family = "binomial"),
+se          = TRUE
+) +                                                     # logistic fit
+theme_bw() +
+labs(
+x     = "Urge to scratch",
+y     = "Probability of scratching",
+title = "Relationship between Urge and Scratching"
+)
+
+p_rel
+```
+
+```         
+#| label: exercise-measurement
+#| exercise: true
+#| exercise.eval: false
+
+# Use the plot above to answer:
+
+#
+
+# - Is the relationship between Urge and probability of scratching linear?
+
+# - Where does the probability of scratching start to increase rapidly?
+
+# - How does this plot relate to the logistic equation:
+
+# pScratch = logit^{-1}(alpha0 + alpha1 * Urge)?
+
+#
+
+# Try changing alpha0 and alpha1 in the parameter section and re-running
+
+# the simulation + this plot to see how the curve changes.
+```
+
+## 8. Exercise: experiments with scenarios
+
+Try creating new scenarios by changing parameters and re-running the simulation.
+
+Ideas:
+
+-   No lavender at all: `Linput <- 0`
+
+-   No random snacks: `Walks <- 0` (and re-generate `snacking`)
+
+-   More gradual allergen decay: `A1 <- -0.02`
+
+-   Different absorption rates: `k <- 2` or `k <- 50`
+
+```         
+#| label: exercise-scenarios
+#| exercise: true
+#| exercise.eval: false
+
+# Example: remove lavender and see if the diet looks more clearly effective
+
+Linput <- 0
+
+# To fully apply this change:
+
+# 1. Re-run the parameter chunks if needed.
+
+# 2. Re-run the simulation chunk (simulate).
+
+# 3. Re-run the plotting chunks (plot-data-prep, plot-series).
+
+# Compare the new plot to the original one.
+```
+
+## 9. Discussion: can we trust the elimination diet
+
+-   When multiple latent processes are at work (protein, lavender, snacks),\
+    can a simple “before vs. after diet” comparison be trusted?
+
+-   What assumptions are we making in order to trust the results of this diet?
+
+-   Given this information, what would you recommend if you were Kirki's vet?
