@@ -1,0 +1,1907 @@
+---
+title: "Lecture 2 · Albert in a Linear World"
+subtitle: "The simplest idea of change: a straight line plus shocks"
+author: "Dynamic Systems Thinking for Psychologists"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 1
+    df_print: kable
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+library(shiny)
+```
+
+```{css, echo=FALSE}
+body { font-size: 16px; }
+h1 { margin-top: 1.6em; }
+details {
+  background: #f4f7fb;
+  border-left: 4px solid #2a78d6;
+  padding: 0.6em 1em;
+  margin: 1em 0 1.6em 0;
+  border-radius: 4px;
+}
+details > summary { cursor: pointer; font-weight: 600; color: #1c5cab; }
+details[open] > summary { margin-bottom: 0.8em; }
+.question {
+  background: #fff8f2;
+  border-left: 4px solid #eb6834;
+  padding: 0.8em 1em;
+  margin: 1.4em 0 0.4em 0;
+  border-radius: 4px;
+}
+.question p:first-child { margin-top: 0; }
+.question p:last-child  { margin-bottom: 0; }
+.keybox {
+  background: #eef4fc;
+  border: 1px solid #b7d3f6;
+  padding: 1em 1.2em;
+  border-radius: 6px;
+  margin: 1.4em 0;
+}
+.tool {
+  border-top: 1px solid #d6d4cc;
+  border-bottom: 1px solid #d6d4cc;
+  padding: 0.6em 0;
+  margin: 1.4em 0;
+  color: #3d3c38;
+}
+.tool > p:first-child { margin-top: 0; }
+.tool strong.tag {
+  font-variant: small-caps; letter-spacing: 0.04em; color: #898781;
+}
+.report {
+  background: #fbfaf6;
+  border: 1px solid #e1e0d9;
+  border-left: 4px solid #0b0b0b;
+  font-family: Georgia, serif;
+  padding: 1em 1.3em;
+  margin: 1.4em 0;
+}
+.part {
+  margin: 2.4em 0 0.4em 0;
+  padding: 0.5em 0.9em;
+  background: #0b0b0b;
+  color: #fcfcfb;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+}
+.shiny-input-container { margin-bottom: 4px; }
+```
+
+
+```{r data, echo=TRUE}
+# Albert's 21 weekly mood ratings (0 = worst imaginable, 100 = best imaginable).
+# Week 0 is the intake session.
+week <- 0:20
+mood <- c(46, 35, 46, 46, 43, 30, 46, 45, 56, 53, 55,
+          54, 59, 61, 44, 77, 73, 71, 64, 78, 71)
+
+albert <- data.frame(week, mood)
+n      <- nrow(albert)
+```
+
+```{r helpers, echo=FALSE}
+# Plotting furniture and fast simulation. Nothing conceptual lives in here.
+
+COL <- list(
+  ink = "#0b0b0b", muted = "#898781", grid = "#e1e0d9",
+  model = "#2a78d6", model_lt = "#9ec5f4", resid = "#eb6834",
+  truth = "#e34948", dark = "#104281", up = "#2f9e6e"
+)
+
+alpha <- function(col, a)
+  rgb(t(col2rgb(col)), alpha = a * 255, maxColorValue = 255)
+
+base_par <- function(...)
+  par(mar = c(4.4, 4.6, 3.2, 1.2), mgp = c(2.8, 0.7, 0), las = 1,
+      col.axis = COL$muted, fg = COL$muted, tcl = -0.3,
+      cex.lab = 1.1, cex.axis = 1.0, ...)
+
+panel <- function(xlim, ylim, xlab = "Week of therapy", ylab = "Mood (0-100)",
+                  main = "", sub = "", xat = NULL, yat = NULL) {
+  plot(NA, xlim = xlim, ylim = ylim, xlab = xlab, ylab = ylab, axes = FALSE)
+  if (is.null(xat)) xat <- pretty(xlim, 6)
+  if (is.null(yat)) yat <- pretty(ylim, 6)
+  abline(h = yat, v = xat, col = COL$grid, lwd = 1)
+  axis(1, at = xat, col = COL$grid, col.ticks = COL$muted)
+  axis(2, at = yat, col = COL$grid, col.ticks = COL$muted)
+  if (nzchar(main))
+    title(main = main, adj = 0, line = 1.8, cex.main = 1.3,
+          col.main = COL$ink, font.main = 2)
+  if (nzchar(sub))
+    title(main = sub, adj = 0, line = 0.5, cex.main = 0.98,
+          col.main = COL$muted, font.main = 1)
+}
+
+# Run code with a fixed seed WITHOUT disturbing the global random stream.
+with_seed <- function(seed, code) {
+  had <- exists(".Random.seed", envir = globalenv())
+  if (had) old <- get(".Random.seed", envir = globalenv())
+  on.exit(if (had) assign(".Random.seed", old, envir = globalenv())
+          else rm(".Random.seed", envir = globalenv()))
+  set.seed(seed)
+  code
+}
+
+# One linear world, many Alberts: a (weeks x R) matrix of simulated moods.
+linear_world <- function(R, b0, b1, sigma, weeks = 0:20)
+  matrix(b0 + b1 * weeks, nrow = length(weeks), ncol = R) +
+  matrix(rnorm(length(weeks) * R, 0, sigma), nrow = length(weeks), ncol = R)
+
+# Simulate R replications of a study and fit each one, without calling lm().
+sim_studies <- function(R, sigma, weeks = 0:20, b0 = b0_hat, b1 = b1_hat) {
+  nn  <- length(weeks)
+  xc  <- weeks - mean(weeks)
+  Sxx <- sum(xc^2)
+  Y   <- linear_world(R, b0, b1, sigma, weeks)
+  b1h <- as.vector(crossprod(xc, Y)) / Sxx
+  b0h <- colMeans(Y) - b1h * mean(weeks)
+  rss <- colSums((Y - (outer(rep(1, nn), b0h) + outer(weeks, b1h)))^2)
+  s   <- sqrt(rss / (nn - 2))
+  se  <- s / sqrt(Sxx)
+  tq  <- qt(0.975, nn - 2)
+  data.frame(b0 = b0h, b1 = b1h, s = s, se = se,
+             lo = b1h - tq * se, hi = b1h + tq * se)
+}
+
+# 95% joint confidence ellipse for (b0, b1).
+conf_ellipse <- function(V, centre, df, level = 0.95, npts = 240) {
+  th <- seq(0, 2 * pi, length.out = npts)
+  ev <- eigen(V)
+  A  <- ev$vectors %*% diag(sqrt(pmax(ev$values, 0)))
+  r  <- sqrt(2 * qf(level, 2, df))
+  t(centre + r * (A %*% rbind(cos(th), sin(th))))
+}
+
+# The three dials, reused by every Part 1 widget.
+dials <- function(id, b0 = 40, b1 = 1.5, sigma = 8)
+  list(
+    sliderInput(paste0(id, "_b0"), "Starting level  (beta0):",
+                min = 0, max = 100, value = b0, step = 1, width = "230px"),
+    sliderInput(paste0(id, "_b1"), "Change per week  (beta1):",
+                min = -3, max = 4, value = b1, step = 0.1, width = "230px"),
+    sliderInput(paste0(id, "_sg"), "Size of weekly shocks  (sigma):",
+                min = 0, max = 25, value = sigma, step = 0.5, width = "230px")
+  )
+```
+
+```{r numbers, echo=FALSE}
+# Every number quoted in the text is computed here, so the prose cannot drift
+# away from the data.
+fit    <- lm(mood ~ week, data = albert)
+b0_hat <- unname(coef(fit)[1])
+b1_hat <- unname(coef(fit)[2])
+e      <- resid(fit)
+s_hat  <- summary(fit)$sigma
+se_b1  <- summary(fit)$coefficients["week", "Std. Error"]
+t_b1   <- summary(fit)$coefficients["week", "t value"]
+p_b1   <- summary(fit)$coefficients["week", "Pr(>|t|)"]
+ci_b1  <- confint(fit)["week", ]
+r2     <- summary(fit)$r.squared
+Sxx    <- sum((week - mean(week))^2)
+ybar   <- mean(albert$mood)
+TSS    <- sum((albert$mood - ybar)^2)
+RSS    <- sum(e^2)
+
+d_alb     <- diff(mood)                           # Albert's week-to-week changes
+worse_alb <- sum(d_alb < 0)
+r_alb     <- cor(d_alb[-length(d_alb)], d_alb[-1])
+
+fit_20   <- b0_hat + 20 * b1_hat
+wk14_res <- unname(e[week == 14])
+wk14_z   <- wk14_res / s_hat
+p_low1   <- pnorm(-abs(wk14_z))                  # one week this low or lower
+p_any21  <- 1 - (1 - p_low1)^n                   # at least one such week in 21
+fit_no14 <- lm(mood ~ week, data = albert[week != 14, ])
+
+pi21 <- predict(fit, data.frame(week = 21), interval = "prediction")
+ci21 <- predict(fit, data.frame(week = 21), interval = "confidence")
+hits_100 <- (100 - b0_hat) / b1_hat
+
+f1    <- function(x, d = 1) formatC(x, format = "f", digits = d)
+p_txt <- formatC(p_b1, format = "f", digits = 6)
+```
+
+# How to use this document
+
+Open it in RStudio and click **Run Document** (or run
+`rmarkdown::run("lecture01_linear_change.Rmd")`). It needs only the `shiny`
+package.
+
+- **Orange boxes** are questions. Answer them, in writing, *before* opening the
+  blue box underneath. Committing to a wrong answer and finding out why is
+  worth ten times more than reading the right one.
+- **Sliders** are there to be moved. Most of the ideas here are much easier to
+  feel than to read.
+- **Grey-ruled boxes** name the statistical tool you have just used, so you
+  can recognise it again outside of Albert's story.
+
+---
+
+# The course: what is making Albert's mood?
+
+In 1920, John Watson and Rosalie Rayner taught an 11-month-old boy they called
+**"Little Albert"** to fear a white rat, by striking a steel bar with a hammer
+behind his head whenever he touched it. Within days Albert was afraid not
+only of the rat but of a rabbit, a dog, a fur coat and a Santa Claus mask. He
+left the hospital before anyone tried to undo the conditioning, and what
+became of him is still debated.
+
+In this course, Albert has grown up. Many years later he is in therapy for
+his mood. At intake (week 0) and then once a week for twenty more weeks, his
+therapist, Nora, asks him to mark his mood over the past week on a line from
+*0 (worst imaginable)* to *100 (best imaginable)*. Those 21 numbers are our
+data. (This grown-up Albert and his ratings are fictional.)
+
+```{r fig-raw, echo=FALSE}
+renderPlot({
+  base_par()
+  panel(c(-0.6, 20.6), c(20, 90), xat = seq(0, 20, 5),
+        main = "Albert's mood over 21 weeks of therapy",
+        sub  = "One self-rating per week, marked at the start of each session")
+  points(albert$week, albert$mood, pch = 19, cex = 1.7, col = COL$ink)
+  text(14, 44, "week 14", pos = 1, offset = 1.0, col = COL$muted, cex = 1.0)
+}, height = 380)
+```
+
+Something produced these numbers: Albert's biology and history, his life
+between sessions, the therapy, the act of marking a line on a sheet. We call
+that the **data-generating mechanism**. We will never see it directly. What
+we can do, and what this whole course does, is:
+
+<div class="keybox">
+
+1. **Propose** a mechanism, written as a model precise enough to *simulate*.
+2. **Explore** the world that mechanism would produce: what kind of data does
+   it make, and what can it never make?
+3. **Confront** it with Albert: which version of it fits his data best, how
+   uncertain is that fit, and where does his data look unlike anything the
+   mechanism produces?
+
+Each lecture proposes a richer mechanism than the last. Each one should get
+us a little closer to whatever is really generating Albert's mood.
+
+</div>
+
+This first lecture starts with the simplest idea of change there is:
+**therapy moves Albert along a straight line, and life adds a shock every week.** Part 1 explores what a
+world like that looks like, before we touch Albert's data. Part 2 fits it to
+Albert, and asks how much we can trust the fit.
+
+::: {.question}
+**Q1.** Before any model: how many mood points does Albert gain per week, on
+average? Write your number down. You will need it in Part 2.
+:::
+
+---
+
+<div class="part">Part 1 · The linear world</div>
+
+# 1. A recipe for making an Albert
+
+A data-generating mechanism is a **story about how each week's number comes
+about**, told precisely enough that a computer could act it out. Here is the
+first story, built in two steps.
+
+### Step 1: what therapy does
+
+Suppose therapy moves Albert's mood steadily. At intake his mood sits at some
+level $\beta_0$, and each week it rises by the same amount $\beta_1$. After
+$t$ weeks he is at
+
+$$\beta_0 + \beta_1\, t$$
+
+If that were the whole story, his chart would be a straight line of dots. Look
+back at his real chart: it clearly isn't. Something else is happening every
+week.
+
+### Step 2: what life does
+
+Go back to the list you made at the start: sleep, a row with a flatmate, the
+weather, a good weekend, how he happened to read the scale that day. None of
+that is in step 1. The linear story lumps all of it together into one term:
+each week, life gives Albert a **shock** $\varepsilon_t$, a push up or down on
+top of where therapy has brought him.
+
+$$\text{Mood}_t \;=\; \underbrace{\beta_0 + \beta_1\, t}_{\text{what therapy does}}
+\;+\; \underbrace{\varepsilon_t}_{\text{what life does}}$$
+
+Saying *what kind* of shocks life deals is part of the story too. The linear
+story makes three claims about them:
+
+1. **Many small causes.** A week's shock is the sum of many small everyday
+   influences, so it follows a bell curve centred on zero (Section 2 shows
+   why).
+2. **The same size every week.** How hard life hits Albert does not depend on
+   the stage of therapy. One number, $\sigma$, describes how big shocks
+   typically are.
+3. **Forgotten by next week.** A shock does not carry over. Each week starts
+   fresh.
+
+### The story as code
+
+Written week by week, the story is a loop:
+
+```{r recipe, echo=TRUE}
+b0 <- 40; b1 <- 1.5; sigma <- 8           # the three dials of this story
+sim_mood <- numeric(21)
+for (t in 0:20) {
+  expected <- b0 + b1 * t                 # where therapy has brought him
+  shock    <- rnorm(1, 0, sigma)          # what life did to him this week
+  sim_mood[t + 1] <- expected + shock     # what he writes on the sheet
+}
+round(sim_mood)
+```
+
+Because the shocks are independent, R can do all 21 weeks in one line, and
+statisticians write the same story in one line too:
+
+$$\text{Mood}_t \;\sim\; \mathcal{N}\bigl(\,\beta_0 + \beta_1\, t,\;\; \sigma\,\bigr)
+\qquad\Longleftrightarrow\qquad
+\texttt{rnorm(21, b0 + b1 * week, sigma)}$$
+
+Keep the loop in mind, though. Every later lecture tells a richer story by
+editing a line in it; next lecture, for instance, lets this week's shock
+depend on last week.
+
+The story has three dials, and each one is a claim about Albert:
+
+| Dial | Name | What it claims about Albert |
+|---|---|---|
+| $\beta_0$ | starting level | his *expected* mood at intake, before life's shocks |
+| $\beta_1$ | change per week | how much therapy raises (or lowers) his expected mood each week, the same every week |
+| $\sigma$ | shock size | how big life's weekly shocks typically are |
+
+**Act the story out.** The blue line is what therapy does, his **expected
+mood** $\beta_0 + \beta_1 t$. The orange strokes are what life did each week.
+The dots are what Albert wrote on his sheet. Each press of the button lets
+life deal a new set of shocks. The line is not itself an Albert: only a
+story with $\sigma = 0$ puts him on it.
+
+```{r fig-build, echo=FALSE}
+do.call(inputPanel, c(dials("bd"), list(
+  sliderInput("bd_weeks", "Weeks of therapy:", min = 5, max = 80, value = 20,
+              step = 1, width = "230px"),
+  checkboxInput("bd_shock", "Show this week's shocks", TRUE),
+  checkboxInput("bd_six", "Act the story out six times", FALSE),
+  actionButton("bd_go", "Let life deal new shocks")
+)))
+
+bd_sims <- reactive({
+  input$bd_go
+  wk <- 0:input$bd_weeks
+  list(wk = wk, Y = linear_world(6, input$bd_b0, input$bd_b1, input$bd_sg, wk))
+})
+
+renderPlot({
+  d <- bd_sims(); wk <- d$wk; Y <- d$Y
+  mu <- input$bd_b0 + input$bd_b1 * wk
+  yl <- range(c(0, 100, Y, mu))
+  one <- function(j, main, sub) {
+    panel(c(-0.5, max(wk) + 0.5), yl, xat = pretty(wk, 5), main = main, sub = sub)
+    rect(-10, 100, 1e3, 1e3, col = alpha(COL$resid, 0.06), border = NA)
+    rect(-10, -1e3, 1e3, 0, col = alpha(COL$resid, 0.06), border = NA)
+    abline(h = c(0, 100), col = COL$resid, lty = 3)
+    lines(wk, mu, col = COL$model, lwd = 3)
+    if (isTRUE(input$bd_shock))
+      segments(wk, mu, wk, Y[, j], col = COL$resid, lwd = if (length(wk) > 40) 1.2 else 2)
+    points(wk, Y[, j], pch = 19, cex = if (length(wk) > 40) 0.9 else 1.4,
+           col = COL$ink)
+  }
+  if (isTRUE(input$bd_six)) {
+    par(mfrow = c(2, 3)); base_par(mar = c(3.6, 3.8, 2.6, 0.8))
+    for (j in 1:6) one(j, sprintf("Run %d", j), "")
+  } else {
+    base_par()
+    one(1, "One run of the story",
+        sprintf("expected mood %.0f + %.1f t   +   shocks of size sigma = %.1f",
+                input$bd_b0, input$bd_b1, input$bd_sg))
+    legend("bottomright", bty = "n", lwd = c(3, 2, NA), pch = c(NA, NA, 19),
+           col = c(COL$model, COL$resid, COL$ink), text.col = COL$ink, cex = 1.0,
+           legend = c("what therapy does (expected mood)", "what life did (shock)",
+                      "what Albert wrote down"))
+  }
+}, height = 440)
+```
+
+::: {.question}
+**Q2.** Set $\sigma$ to 0. Describe the Albert this story produces. Does
+anybody's mood work like that?
+
+**Q3.** Set $\beta_1$ to 0: therapy does nothing at all. Keep $\sigma = 8$,
+tick *act the story out six times*, and deal new shocks a few times. Do you
+ever see an Albert who seems to be improving, or relapsing? What does that
+tell you about reading a single person's chart?
+
+**Q4.** Set $\beta_1 = 1.5$. With $\sigma = 3$, can you see what therapy is
+doing? With $\sigma = 20$? What decides whether change is *visible*?
+
+**Q5.** Set the therapy to 80 weeks. What does this story predict about
+Albert's mood a year and a half in? Is that a problem with the story, or with
+the question?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q2.** Every week lands exactly on the line: Albert's mood is a clock. No
+one's mood works like that. The shocks are where *everything the story does
+not explain* goes. The linear story does not claim those influences are
+unimportant or truly random; it just does not model them one by one, and
+summarises their combined effect with a single dial, $\sigma$.
+
+**Q3.** Yes, regularly. Twenty-one shocks contain runs, streaks and apparent
+turning points, and the eye turns them into stories ("he was getting better
+until week 12"). A story in which therapy does **nothing** still produces
+charts that look like improvement or relapse. Keep this in mind for Part 2:
+part of the job of statistics is to ask how easily the pattern we see could
+come from shocks alone.
+
+**Q4.** At $\sigma = 3$ the climb is unmistakable; at $\sigma = 20$ it
+drowns. What matters is signal against shocks: the total change over therapy
+($\beta_1 \times 20 = 30$ points) compared with the size of a typical shock
+($\sigma$). The same real improvement can be obvious in one person and
+invisible in another, simply because life knocks the second person around
+more.
+
+**Q5.** It predicts Albert keeps climbing at the same rate forever: past 100,
+off the top of the scale. This story knows nothing about ceilings, plateaus or
+a "normal" mood to settle back to. Over 20 weeks a straight line may be a fine
+description; as a *mechanism* of change it cannot be right in the long run.
+Later lectures tell stories that can level off.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+A **generative model**: $Y_t = \beta_0 + \beta_1 t + \varepsilon_t$ with
+$\varepsilon_t \sim \mathcal{N}(0, \sigma)$ independently, written compactly
+as $Y_t \sim \mathcal{N}(\beta_0 + \beta_1 t, \sigma)$. The line
+$\beta_0 + \beta_1 t$ is the **expected value** $E[Y_t]$; the
+$\varepsilon_t$ are called **errors**, **disturbances** or, in dynamic
+models, **shocks** (or innovations).
+:::
+
+---
+
+# 2. Life's shocks: why a bell curve?
+
+The story claims that each week's shock follows a normal distribution. Why
+should it? Nothing in Albert's life is "normally distributed". A row with his
+flatmate either happens or it doesn't. A bad night's sleep costs a lot or
+nothing. Most weeks bring no bad news; some bring a blow.
+
+Start with a single influence, say sleep. In any one week it has one effect
+on Albert's mood. But that effect **differs from week to week**: most weeks
+sleep makes no difference, some weeks a bad night costs him a lot. The
+pattern of how one influence's effect varies across weeks is *that
+influence's distribution*, and it looks nothing like a bell.
+
+A week's shock, though, is not one influence. It is the **sum of many**:
+sleep, plus the flatmate, plus the weather, plus work, and so on, each
+varying from week to week in its own way. Sums behave differently from their
+parts. Below, each influence has a shape that is anything but a bell. Add
+more of them together and watch what the *total* looks like, over 5000 of
+Albert's weeks.
+
+```{r fig-clt, echo=FALSE}
+inputPanel(
+  sliderInput("clt_k", "Small influences per week:", min = 1, max = 40,
+              value = 1, step = 1, width = "260px"),
+  selectInput("clt_shape", "Week to week, each influence is...",
+              choices = c("a coin flip: a good or a bad day" = "coin",
+                          "anything within a range" = "unif",
+                          "mostly nothing, now and then a blow" = "skew"),
+              selected = "skew", width = "300px")
+)
+
+clt_draw <- function(m, shape) switch(shape,
+  coin = sample(c(-1, 1), m, replace = TRUE),
+  unif = runif(m, -1, 1),
+  skew = 1 - rexp(m))                       # mean 0, long tail of bad blows
+clt_var <- list(coin = 1, unif = 1/3, skew = 1)   # variance of one influence
+
+renderPlot({
+  k <- input$clt_k; shape <- input$clt_shape
+  one  <- clt_draw(20000, shape)
+  tot  <- colSums(matrix(clt_draw(5000 * k, shape), nrow = k))
+  tot  <- tot / sqrt(k * clt_var[[shape]]) * 8   # rescale: shocks of size sigma = 8
+
+  par(mfrow = c(1, 2)); base_par()
+
+  h1 <- hist(one, breaks = if (shape == "coin") c(-1.5, -0.5, 0.5, 1.5) else 40,
+             plot = FALSE)
+  plot(h1, freq = FALSE, col = alpha(COL$muted, 0.5), border = "white",
+       main = "", xlab = "its effect on mood in a given week", ylab = "density", axes = FALSE)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("One influence, over 20000 weeks", adj = 0, line = 1.8, cex.main = 1.3, col.main = COL$ink)
+  title("e.g. sleep: how much it moved his mood each week", adj = 0, line = 0.5, cex.main = 0.98,
+        col.main = COL$muted, font.main = 1)
+
+  br2 <- if (shape == "coin") seq(-k - 1, k + 1, by = 2) * 8 / sqrt(k) else 50
+  h2 <- hist(tot, breaks = br2, plot = FALSE)    # coin sums sit on a lattice
+  plot(NA, xlim = c(-32, 32), ylim = c(0, max(h2$density, dnorm(0, 0, 8)) * 1.25),
+       axes = FALSE, xlab = "a week's shock (mood points)", ylab = "density")
+  abline(h = pretty(c(0, max(h2$density)), 4), col = COL$grid)
+  plot(h2, freq = FALSE, add = TRUE, col = alpha(COL$resid, 0.45), border = "white")
+  curve(dnorm(x, 0, 8), add = TRUE, col = COL$model, lwd = 3)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title(sprintf("The sum of %d influence%s", k, if (k == 1) "" else "s"),
+        adj = 0, line = 1.8, cex.main = 1.3, col.main = COL$ink)
+  title("5000 weeks; blue = normal curve",
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 400)
+```
+
+::: {.question}
+**Q6a.** Start with *mostly nothing, now and then a blow* and one influence
+per week. Then add influences one at a time. Roughly how many does it take
+before the total looks like the blue bell? Is it the same for the coin flip?
+
+**Q6b.** What kind of week would break this argument, so that the shock is
+*not* bell-shaped?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q6a.** For the coin flip, a handful is enough; for the lopsided "blow now
+and then" it takes more, a couple of dozen, before the long tail disappears.
+This is the **central limit theorem**: add up enough small, independent
+influences and the total is approximately normal, *whatever* the shape of the
+individual influences. That is the rationale for normal shocks: not that any
+single cause is normal, but that many small causes add up.
+
+**Q6b.** A week dominated by *one* large event: a bereavement, a breakup,
+losing a job. Then the shock is not the sum of many small things, and the
+central limit theorem does not apply. The distribution of shocks then has
+**heavier tails** than a bell: extreme weeks happen more often than the normal
+curve predicts. The same happens if the small influences are not independent
+(one bad night making the next more likely). Both are reasons a richer story
+might replace the normal shock later on.
+
+</details>
+
+### One Albert's shocks
+
+Because the story deals shocks from the same bell every week, we can look at
+the bell through one Albert: here are the shocks from 1000 of his weeks, as
+if he kept rating for twenty years. That makes it easy to ask how likely a
+particular week is.
+
+```{r fig-slice, echo=FALSE}
+do.call(inputPanel, c(dials("sl"), list(
+  sliderInput("sl_week", "In week:", min = 0, max = 20, value = 10,
+              step = 1, width = "230px"),
+  sliderInput("sl_cut", "How often is mood below...", min = 0, max = 100,
+              value = 40, step = 1, width = "230px"),
+  actionButton("sl_go", "Let life deal new shocks")
+)))
+
+sl_shocks <- reactive({ input$sl_go; rnorm(1000) })   # scaled by sigma below
+
+renderPlot({
+  b0 <- input$sl_b0; b1 <- input$sl_b1; sg <- max(input$sl_sg, 0.01)
+  x0 <- input$sl_week; mu0 <- b0 + b1 * x0
+  need <- input$sl_cut - mu0                # shock needed to fall below the cut
+  sh <- sl_shocks() * sg
+  y21 <- b0 + b1 * (0:20) + sh[1:21]
+  yl <- range(c(0, 100, y21))
+
+  par(mfrow = c(1, 2)); base_par()
+
+  panel(c(-0.6, 20.6), yl, xat = seq(0, 20, 5),
+        main = sprintf("Week %d: expected mood %.1f", x0, mu0),
+        sub = sprintf("to fall below %d: a shock of %.1f or worse",
+                      input$sl_cut, need))
+  lines(0:20, b0 + b1 * (0:20), col = COL$model, lwd = 3)
+  segments(0:20, b0 + b1 * (0:20), 0:20, y21, col = alpha(COL$resid, 0.6), lwd = 1.8)
+  points(0:20, y21, pch = 19, cex = 1.2, col = alpha(COL$ink, 0.6))
+  abline(h = input$sl_cut, col = COL$resid, lty = 2, lwd = 2)
+  arrows(x0, mu0, x0, input$sl_cut, length = 0.08, col = COL$resid, lwd = 3)
+  points(x0, mu0, pch = 19, cex = 1.8, col = COL$model)
+
+  h <- hist(sh, breaks = 40, plot = FALSE)
+  xl <- c(-4, 4) * sg
+  plot(NA, xlim = xl, ylim = c(0, max(h$density, dnorm(0, 0, sg)) * 1.25), axes = FALSE,
+       xlab = "a week's shock (mood points)", ylab = "density")
+  abline(h = pretty(c(0, max(h$density)), 4), col = COL$grid)
+  plot(h, freq = FALSE, add = TRUE, col = alpha(COL$resid, 0.45), border = "white")
+  curve(dnorm(x, 0, sg), add = TRUE, col = COL$model, lwd = 3)
+  abline(v = need, col = COL$resid, lty = 2, lwd = 2.5)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("1000 weeks of one Albert's shocks", adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+  title(sprintf("that bad or worse: %.1f%% of weeks (theory %.1f%%)",
+                100 * mean(sh < need), 100 * pnorm(need, 0, sg)),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q6c.** In a story with $\beta_0 = 40$, $\beta_1 = 1.5$, $\sigma = 8$: how
+often would Albert's mood in week 10 fall below 40, where he started?
+Estimate first, then check.
+
+**Q7.** Slide the week from 0 to 20. The shock needed changes, but does the
+*bell* ever change? What claim about Albert is hidden in that?
+
+**Q8.** About what share of weeks should land within ±2σ of the line? If you
+watched Albert for 21 weeks, would you expect exactly that share?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q6c.** Expected mood at week 10 is $40 + 1.5 \times 10 = 55$, so life would
+have to push him down by 15 points, almost 2σ. Only about
+`r f1(100 * pnorm(40, 55, 8))`% of weeks bring a shock that bad. After ten
+weeks of steady improvement, a week as bad as intake is rare but not
+impossible.
+
+**Q7.** The bell never changes: the same shocks are dealt at intake and after
+twenty weeks. So the linear story claims Albert is **exactly as unpredictable
+at intake as after twenty weeks of therapy**. For someone recovering from
+depression that is doubtful. People in an acute episode are often *more*
+changeable than people who have stabilised, and instability is itself studied
+as an early warning sign of relapse. A story in which the size of shocks
+changes is a different, richer story.
+
+**Q8.** About 95%. Over 21 weeks you would rarely see exactly that. The count
+moves in steps of about 5 percentage points, and small samples scatter around
+the long-run value. Expect anything from about 18 to 21 of 21.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+The **central limit theorem** (sums of many small independent influences are
+approximately normal) as the rationale for **normal errors**; the
+**conditional distribution** $Y_t \sim \mathcal{N}(\beta_0 + \beta_1 t,
+\sigma)$, i.e. expected mood plus a normal shock; and two assumptions made
+visible: **linearity** (the expected mood lies on a line) and
+**homoscedasticity** (the same bell of shocks every week).
+:::
+
+---
+
+# 3. How does a linear Albert change from one week to the next?
+
+This course is about *dynamics*: how a person's state now relates to their
+state a moment ago. So ask the linear story a dynamic question: **if therapy
+is steadily improving Albert, how does he change from one week to the next?**
+
+The answer follows from the story. The change from last week to this week is
+
+$$\text{Mood}_t - \text{Mood}_{t-1} \;=\; \beta_1 \;+\; (\varepsilon_t - \varepsilon_{t-1})$$
+
+the steady improvement $\beta_1$, plus this week's shock minus last week's.
+Watch what that produces, first over 20 weeks and then over 1000 weeks of the
+same Albert.
+
+```{r fig-changes, echo=FALSE}
+do.call(inputPanel, c(dials("ch", b0 = 40, b1 = 1.5, sigma = 8), list(
+  actionButton("ch_go", "Let life deal new shocks")
+)))
+
+ch_sims <- reactive({
+  input$ch_go
+  y <- linear_world(1, input$ch_b0, input$ch_b1, max(input$ch_sg, 0.01),
+                    weeks = 0:1000)[, 1]
+  diff(y)                                   # 1000 week-to-week changes
+})
+
+renderPlot({
+  D <- ch_sims()
+  b1 <- input$ch_b1; sg <- max(input$ch_sg, 0.01)
+  par(mfrow = c(1, 2)); base_par()
+
+  ## left: the first 20 weeks
+  d1 <- D[1:20]
+  lim <- max(abs(d1), 5) * 1.15
+  panel(c(0.4, 20.6), c(-lim, lim), xat = seq(0, 20, 5), ylab = "change since last week",
+        main = "Albert, week by week",
+        sub = sprintf("worse than the week before in %d of 20;  dashed = beta1", sum(d1 < 0)))
+  abline(h = 0, col = COL$muted, lwd = 1.5)
+  abline(h = b1, col = COL$model, lwd = 2.5, lty = 2)
+  rect(1:20 - 0.35, 0, 1:20 + 0.35, d1, border = NA,
+       col = ifelse(d1 < 0, COL$resid, COL$up))
+
+  ## right: does a jump predict the next change?
+  x <- D[-length(D)]; y <- D[-1]
+  lim2 <- quantile(abs(c(x, y)), 0.995)
+  plot(NA, xlim = c(-lim2, lim2), ylim = c(-lim2, lim2), axes = FALSE,
+       xlab = "change this week", ylab = "change next week")
+  abline(h = pretty(c(-lim2, lim2), 5), v = pretty(c(-lim2, lim2), 5), col = COL$grid)
+  abline(h = 0, v = 0, col = COL$muted)
+  points(x, y, pch = 19, cex = 0.6, col = alpha(COL$model, 0.35))
+  abline(lm(y ~ x), col = COL$resid, lwd = 3)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Jump now, change next?", adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+  title(sprintf("1000 weeks: worse %.0f%% (theory %.0f%%)   r = %+.2f",
+                100 * mean(D < 0), 100 * pnorm(0, b1, sg * sqrt(2)), cor(x, y)),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q9.** Therapy improves Albert by a steady 1.5 points every week, and life
+deals shocks of size $\sigma = 8$. In what share of weeks is he *worse* than
+the week before? Guess before you look.
+
+**Q10.** Look at the right panel. After a week in which Albert jumped up a
+lot, what tends to happen the next week? Is there anything in the linear
+story that pulls him back?
+
+**Q11.** A clinician notices that whenever Albert has a very good week, he
+"crashes" the week after, and concludes that he cannot sustain good moods.
+What would you say?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q9.** About `r round(100 * pnorm(0, 1.5, 8 * sqrt(2)))`%: nearly half.
+A steadily improving person, with *nothing* going wrong in therapy, gets
+worse from one week to the next almost as often as he gets better. The steady
+improvement (1.5 points) is small compared with the scatter of a difference
+between two shocks ($\sigma\sqrt{2} \approx 11$ points). Week-to-week
+comparisons are a very noisy way to judge progress.
+
+**Q10.** It tends to drop again: the correlation between successive changes
+is about −0.5. Yet nothing in the linear story pulls Albert back; every
+shock is forgotten by the following week. The pattern arises because a lucky
+week's shock $\varepsilon_t$ appears in *both* changes: with a plus sign in
+the jump up, and with a minus sign in the change after. Shocks with no memory
+at all make a person *look* as if he bounces back.
+
+**Q11.** That pattern is exactly what the linear story produces, and the
+linear story contains no psychological process at all. Before we credit (or
+blame) Albert with self-regulation, we need a story in which regulation
+actually exists, and a way to tell it apart from this artefact. That is
+precisely the kind of mechanism later lectures build: in a dynamic model,
+last week's state really does pull on this week's.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+**Differencing** a time series, $\Delta Y_t = Y_t - Y_{t-1}$, and the
+**independence** assumption: in the linear story
+$\mathrm{Cor}(\varepsilon_t, \varepsilon_{t-1}) = 0$, which makes successive
+differences correlate at exactly −0.5. Independence is the one assumption you
+cannot see in a single week, and the one most likely to be false for repeated
+ratings from one person.
+:::
+
+---
+
+# 4. Could Albert live in a linear world?
+
+Now bring in Albert, but still without fitting anything. The question is not
+yet *which* linear world, only: **is Albert's data the kind of thing a linear
+world makes at all?**
+
+Two ways to ask it.
+
+**Fingerprints.** Section 3 showed two fingerprints of the linear story: a
+steadily improving Albert is worse than the week before in close to half of
+weeks, and successive changes correlate at about −0.5. The real Albert was
+worse than the week before in **`r worse_alb` of 20** weeks, and his
+successive changes correlate at **r = `r f1(r_alb, 2)`**. Both are what a
+linear world would produce.
+
+**A lineup.** Below, Albert's real 21 weeks are hidden among eight runs of the
+linear story, with dials that *you* set (rounded to whole numbers
+and kept on the 0 to 100 scale, like real ratings). First tune the dials until
+the fakes look like the real thing. Then give a neighbour the screen: can they
+find Albert?
+
+```{r fig-lineup, echo=FALSE}
+do.call(inputPanel, c(dials("lu", b0 = 55, b1 = 0.5, sigma = 3), list(
+  actionButton("lu_go", "New lineup"),
+  checkboxInput("lu_show", "Reveal the real Albert", FALSE)
+)))
+
+lu_pos <- reactive({ input$lu_go; sample(9, 1) })
+lu_Y   <- reactive({                     # redrawn by the dials or the button,
+  input$lu_go                            # but NOT by the reveal checkbox
+  Y <- linear_world(9, input$lu_b0, input$lu_b1, input$lu_sg)
+  pmin(pmax(round(Y), 0), 100)
+})
+
+renderPlot({
+  pos <- lu_pos()
+  Y <- lu_Y()
+  Y[, pos] <- albert$mood
+  yl <- range(c(20, 90, Y))
+  par(mfrow = c(3, 3)); base_par(mar = c(2.4, 3.2, 3.0, 0.6), mgp = c(2, 0.6, 0))
+  for (j in 1:9) {
+    real <- isTRUE(input$lu_show) && j == pos
+    panel(c(-0.5, 20.5), yl, xlab = "", ylab = "", xat = seq(0, 20, 5),
+          main = if (real) sprintf("%d  <- Albert", j) else as.character(j))
+    points(week, Y[, j], pch = 19, cex = 1.1,
+           col = if (real) COL$resid else COL$ink)
+  }
+}, height = 620)
+```
+
+::: {.question}
+**Q12.** Which dial settings made the fakes hardest to tell from Albert? Write
+them down next to your guess from Q1.
+
+**Q13.** Suppose that, with good dial settings, nobody in the room can pick
+out the real Albert. What have you shown, and what have you *not* shown?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q12.** Most people end up somewhere near a starting level in the high 30s,
+a weekly change around 1.5 to 2, and shocks of size around 7 or 8. Hold on to your
+values: Part 2 does the same thing systematically, and you will be able to
+see how close your eye got.
+
+**Q13.** You have shown that a linear world *can* produce data like Albert's:
+with only 21 weeks, his chart does not stand out from linear Alberts. You
+have **not** shown that his mood *is* generated by a straight line plus
+shocks. Many different mechanisms could produce 21 points like these,
+including ones with memory, set points or tipping points, and short, noisy
+series are bad at telling them apart. "The model fits" is the start of the
+argument, not the end of it. That is why this course keeps proposing new
+mechanisms and asking where each one fails.
+
+</details>
+
+<div class="keybox">
+
+**What the linear world claims about how Albert changes**
+
+1. **Change is steady.** The same $\beta_1$ points every week, forever, with no
+   ceiling and no plateau.
+2. **Change is driven by time, not by Albert.** Where he is this week has no
+   influence on where he goes next.
+3. **Fluctuations have no memory.** A bad week is a one-off shock that
+   vanishes completely by the following week.
+4. **Unpredictability never changes.** He is exactly as variable at intake as
+   after twenty weeks of therapy.
+
+Each of these is a hypothesis about the mechanism, not a fact about Albert.
+Every later lecture relaxes at least one of them.
+
+</div>
+
+---
+
+<div class="part">Part 2 · Which linear world is Albert's?</div>
+
+Part 1 went from **dials to data**: pick $\beta_0, \beta_1, \sigma$, and the
+recipe produces Alberts. Part 2 goes backwards, from **data to dials**:
+given the one Albert we actually have, which dial settings are most
+consistent with him? That backwards step is **estimation**. And because every
+Albert is one noisy draw from his world, the dials we recover are uncertain.
+The rest of this lecture is about *how* uncertain, and why.
+
+<div class="keybox">
+
+Keep two kinds of variability apart from the start:
+
+**(A) How much Albert's weeks scatter around his expected mood.** This is
+$\sigma$, a dial of the world. You met it in Part 1.
+
+**(B) How much our *estimate* of his dials would scatter, if his 20 weeks
+could be lived again.** This is the **standard error**. It is not a dial of
+the world; it is a property of what one short, noisy series lets us learn.
+
+**(B) is caused by (A).** The noisier Albert's weeks, the wobblier any line we
+draw through them.
+
+</div>
+
+---
+
+# 5. From data back to dials
+
+### The flat world: "he's just having ups and downs"
+
+Start with the most sceptical linear world: $\beta_1 = 0$. Albert does not
+change; his weeks just scatter around a fixed level. If that were his world,
+the best guess for any week would simply be his average mood.
+
+```{r null-model, echo=TRUE}
+ybar <- mean(albert$mood)                 # best guess in a flat world
+TSS  <- sum((albert$mood - ybar)^2)       # how badly it misses, in total
+c(average_mood = round(ybar, 1), total_squared_error = round(TSS))
+```
+
+```{r fig-null, echo=FALSE}
+renderPlot({
+  base_par()
+  panel(c(-0.6, 20.6), c(20, 90), xat = seq(0, 20, 5),
+        main = "The flat world: Albert is always the same",
+        sub  = sprintf("Predict %.1f every week.  Total squared error = %.0f",
+                       ybar, TSS))
+  segments(albert$week, ybar, albert$week, albert$mood,
+           col = COL$resid, lwd = 2.5)
+  abline(h = ybar, col = COL$model, lwd = 3)
+  points(albert$week, albert$mood, pch = 19, cex = 1.6, col = COL$ink)
+  text(20.4, 27, "orange = how wrong the flat world is each week",
+       adj = 1, col = COL$resid, cex = 1.0)
+}, height = 380)
+```
+
+::: {.question}
+**Q14.** In a flat world, the orange misses would be nothing but shocks. What would
+they look like? What do they actually look like?
+:::
+
+<details>
+<summary>Show the answer</summary>
+
+In a flat world they would be scattered up and down in no particular order,
+like the six flat-world runs you acted out in Q3. Instead they are almost all
+*below* the average early on and almost all *above* it later. The flat world
+is wrong in a way that depends on the week. A slope is exactly the device
+for absorbing that pattern, and the habit of checking whether any pattern is
+**left over** comes back in Section 7.
+
+</details>
+
+### Finding the best dials
+
+For any setting of $\beta_0$ and $\beta_1$, measure each week's vertical miss,
+square it, and add the squares up. The **least-squares** estimate is the
+setting that makes this total as small as possible.
+
+$$\text{squared error}(b_0, b_1) \;=\; \sum_t \bigl(\text{mood}_t - (b_0 + b_1\,t)\bigr)^2$$
+
+This is not an arbitrary rule. In the normal linear world of Part 1, the dial
+setting with the smallest squared error is also the one under which Albert's
+actual data would have been **most probable** (the *maximum-likelihood*
+estimate). Least squares asks: *which linear world makes the real Albert
+least surprising?*
+
+**Try to beat the computer.** Left: your line through Albert's weeks. Right:
+a map of every possible setting of the first two dials, darker meaning better.
+
+```{r fit-by-hand, echo=FALSE}
+inputPanel(
+  sliderInput("b0", "Starting level  (b0):",
+              min = 25, max = 50, value = 45, step = 0.1, width = "260px"),
+  sliderInput("b1", "Change per week  (b1):",
+              min = 0, max = 3.5, value = 0.4, step = 0.01, width = "260px"),
+  checkboxInput("show_best", "Show the least-squares line", FALSE)
+)
+
+ssr_fun  <- function(b0, b1) sum((albert$mood - (b0 + b1 * albert$week))^2)
+b0_grid  <- seq(25, 50, length.out = 140)
+b1_grid  <- seq(0,  3.5, length.out = 140)
+SSRsurf  <- outer(b0_grid, b1_grid, Vectorize(ssr_fun))
+
+renderPlot({
+  my_ssr <- ssr_fun(input$b0, input$b1)
+  par(mfrow = c(1, 2))
+  base_par()
+
+  panel(c(-0.6, 20.6), c(20, 95), xat = seq(0, 20, 5),
+        main = "Your line",
+        sub  = sprintf("squared error = %.0f    (best possible = %.0f)",
+                       my_ssr, RSS))
+  segments(albert$week, input$b0 + input$b1 * albert$week,
+           albert$week, albert$mood, col = COL$resid, lwd = 2.5)
+  if (isTRUE(input$show_best))
+    abline(fit, col = COL$muted, lwd = 2.5, lty = 2)
+  abline(a = input$b0, b = input$b1, col = COL$model, lwd = 3.5)
+  points(albert$week, albert$mood, pch = 19, cex = 1.5, col = COL$ink)
+  if (isTRUE(input$show_best))
+    legend("topleft", bty = "n", lty = c(1, 2), lwd = c(3.5, 2.5),
+           col = c(COL$model, COL$muted), text.col = COL$ink, cex = 1.0,
+           legend = c("your line", "least squares"))
+
+  brk  <- c(seq(RSS, quantile(SSRsurf, 0.7), length.out = 15),
+            max(SSRsurf) + 1)
+  cols <- colorRampPalette(c(COL$dark, COL$model, COL$model_lt,
+                             "#cde2fb", "#fcfcfb"))(length(brk) - 1)
+  image(b0_grid, b1_grid, SSRsurf, breaks = brk, col = cols, axes = FALSE,
+        xlab = "starting level  (b0)", ylab = "change per week  (b1)")
+  contour(b0_grid, b1_grid, SSRsurf, levels = brk[-length(brk)],
+          add = TRUE, col = alpha("#fcfcfb", 0.5), drawlabels = FALSE)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  points(b0_hat, b1_hat, pch = 4, cex = 1.8, lwd = 3, col = COL$resid)
+  points(input$b0, input$b1, pch = 21, cex = 2.2, lwd = 3,
+         bg = alpha(COL$resid, 0.5), col = "#fcfcfb")
+  title("Every possible line", adj = 0, line = 1.8, cex.main = 1.3,
+        col.main = COL$ink)
+  title("circle = you,  cross = the best line,  darker = better",
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted,
+        font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q15.** Get your squared error as low as you can. How close are your dials
+to the ones you picked by eye in the lineup (Q12)?
+
+**Q16.** A colleague insists Albert improves by **2.11** points a week. Set
+the starting level to **36.5** and the change to **2.11**, and note the error.
+Keep the change at 2.11 and move the starting level until the error is as
+small as you can make it. How much of the damage did you undo? What does that
+say about the colleague's claim?
+:::
+
+<details>
+<summary>Show the answer to Q16</summary>
+
+At 36.5 and 2.11 the error is about `r round(ssr_fun(36.5, 2.11))`, against
+a best possible `r round(RSS)`. Lowering the starting level to about
+`r f1(ybar - 2.11 * mean(week))` brings it back to about
+`r round(ssr_fun(ybar - 2.11 * mean(week), 2.11))`: you undo roughly
+`r round(100 * (ssr_fun(36.5, 2.11) - ssr_fun(ybar - 2.11 * mean(week), 2.11)) / (ssr_fun(36.5, 2.11) - RSS))`%
+of the damage.
+
+So *"he started lower and is improving faster"* fits almost as well.
+**Two wrong dials can make a nearly-right line.** On the map you moved a long
+way from the cross but along the diagonal valley, so you stayed in the dark
+region. The data do not pin down the starting level and the rate of change
+separately: push one, and the other compensates. Section 11 shows where that
+comes from, and what to do about it.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+The **null (intercept-only) model** and the **total sum of squares**
+$\text{TSS} = \sum_t (y_t - \bar y)^2$; **ordinary least squares**, which
+minimises the residual sum of squares $\text{RSS} = \sum_t (y_t - \hat y_t)^2$
+and, under normal errors, coincides with **maximum likelihood**.
+:::
+
+---
+
+# 6. The estimated dials
+
+`lm()` finds the bottom of that valley with an exact formula.
+
+```{r fit, echo=TRUE}
+fit <- lm(mood ~ week, data = albert)
+summary(fit)
+```
+
+Read the output as estimates of the three dials of Albert's linear world,
+plus statements about how uncertain they are:
+
+| In the output | Value | What it estimates, in Albert's terms |
+|---|---|---|
+| `(Intercept)` | `r f1(b0_hat, 2)` | $\beta_0$: his expected mood at intake, about `r round(b0_hat)` out of 100 |
+| `week` | `r f1(b1_hat, 2)` | $\beta_1$: about `r f1(b1_hat)` points gained per week, roughly `r round(20 * b1_hat)` over 20 weeks |
+| `Residual standard error` | `r f1(s_hat, 2)` | $\sigma$: a single week typically lands within about `r round(s_hat)` points of his expected mood. **Variability (A)** |
+| `Std. Error` of `week` | `r f1(se_b1, 3)` | Not a dial: how much the estimated weekly gain would typically change if his 20 weeks were lived again. **Variability (B)** |
+| `Multiple R-squared` | `r f1(r2, 2)` | Share of the variation in his ratings that the line accounts for: about `r round(100 * r2)`% |
+| `t value` and p-value of `week` | `r f1(t_b1, 2)`, `r p_txt` | How surprising a slope this steep would be if his world were flat |
+
+Look back at your guess from Q1 and your lineup dials from Q12.
+
+### Could a flat world have produced this? Shuffling Albert's weeks
+
+In a flat world ($\beta_1 = 0$) the *order* of Albert's weeks carries no
+information: any ordering of his 21 ratings would be just as likely as the
+real one. So shuffle them, fit a line to each shuffle, and see what slopes a
+flat world tends to produce.
+
+```{r fig-shuffle, echo=FALSE}
+inputPanel(
+  actionButton("sh_go", "Shuffle Albert's weeks 2000 more times")
+)
+
+sh_sims <- reactive({
+  input$sh_go
+  Y <- replicate(2000, sample(albert$mood))
+  list(one = Y[, 1],
+       b1  = as.vector(crossprod(week - mean(week), Y)) / Sxx)
+})
+
+renderPlot({
+  d <- sh_sims()
+  par(mfrow = c(1, 2)); base_par()
+
+  panel(c(-0.6, 20.6), c(20, 90), xat = seq(0, 20, 5),
+        main = "One shuffled Albert",
+        sub  = sprintf("Same 21 ratings, random order.  slope = %+.2f",
+                       d$b1[1]))
+  abline(lm(d$one ~ week), col = COL$muted, lwd = 3, lty = 2)
+  points(week, d$one, pch = 19, cex = 1.5, col = alpha(COL$ink, 0.7))
+
+  hb <- hist(d$b1, breaks = 40, plot = FALSE)
+  plot(NA, xlim = c(-2.3, 2.3), ylim = c(0, max(hb$density) * 1.3), axes = FALSE,
+       xlab = "slope in a shuffled (flat) world", ylab = "density")
+  abline(h = pretty(c(0, max(hb$density)), 4), col = COL$grid)
+  plot(hb, freq = FALSE, add = TRUE, col = alpha(COL$muted, 0.5),
+       border = "white")
+  abline(v = b1_hat, col = COL$model, lwd = 3.5)
+  text(b1_hat, max(hb$density) * 1.2, sprintf("Albert: %.2f", b1_hat),
+       pos = 2, col = COL$model, font = 2, cex = 1.1)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("2000 shuffled Alberts", adj = 0, line = 1.8, cex.main = 1.3,
+        col.main = COL$ink)
+  title(sprintf("steepest: %.2f     as steep as Albert's: %d",
+                max(abs(d$b1)), sum(abs(d$b1) >= b1_hat)),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted,
+        font.main = 1)
+}, height = 400)
+```
+
+::: {.question}
+**Q17.** How often does a shuffled, flat-world Albert produce a slope as
+steep as the real one? What does the p-value in the `lm()` output therefore
+mean?
+
+**Q18.** Does a tiny p-value show that Albert's world is *linear*?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q17.** Essentially never. Shuffled slopes pile up around zero and mostly
+stay within about ±1; Albert's `r f1(b1_hat, 2)` is far out in the tail. That
+is what the p-value says: *if Albert's world were flat, data with a trend
+this strong would almost never arise.* `lm()` computes it from the
+$t$ distribution rather than by shuffling ($p \approx$ `r p_txt`), but the
+question is the same. It is **not** the probability that the flat world is
+true, nor the probability that therapy works.
+
+**Q18.** No. It rules out one very specific world (flat, with independent
+shocks) as a good account of Albert. It says nothing about whether a
+straight line is the *right* shape, and nothing about whether the shocks are
+really memoryless. Many non-linear mechanisms would also produce a
+"significant" slope here.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+The **coefficient estimates** $\hat\beta_0, \hat\beta_1$, the **residual
+standard error** $\hat\sigma$, the **standard error**
+$\mathrm{SE}(\hat\beta_1)$, $R^2 = 1 - \text{RSS}/\text{TSS}$, and the
+**p-value** for $H_0\!: \beta_1 = 0$, here illustrated by a **permutation
+test**. With one predictor the F-test in the output is the same test:
+$F = t^2$ (`r f1(t_b1, 2)`² = `r f1(t_b1^2, 1)`).
+:::
+
+---
+
+# 7. The shocks we estimated: residuals, sigma, and week 14
+
+Each week's miss from the fitted line, its **residual**, is our best guess at
+that week's shock $\varepsilon_t$. If Albert lives in a linear world, the 21
+residuals should look like 21 independent draws from one normal distribution
+centred at zero, and their spread estimates $\sigma$:
+
+$$\hat\sigma \;=\; \sqrt{\frac{\sum_t e_t^2}{n - 2}}$$
+
+(dividing by $n - 2$ because two dials, $\beta_0$ and $\beta_1$, were already
+estimated from these same 21 weeks).
+
+```{r sigma-hat, echo=TRUE}
+e <- resid(fit)
+c(sum_of_squared_misses = round(sum(e^2), 1),
+  divided_by_n_minus_2  = round(sum(e^2) / (n - 2), 1),
+  sigma_hat             = round(sqrt(sum(e^2) / (n - 2)), 2))
+```
+
+```{r fig-resid, echo=FALSE}
+renderPlot({
+  par(mfrow = c(1, 3)); base_par()
+
+  panel(c(-0.6, 20.6), c(-24, 24), ylab = "miss from line (points)",
+        xat = seq(0, 20, 5),
+        main = "Residuals over time", sub = "Any pattern left?")
+  abline(h = 0, col = COL$model, lwd = 2.5)
+  abline(h = c(-2, 2) * s_hat, col = COL$muted, lty = 3, lwd = 1.5)
+  segments(albert$week, 0, albert$week, e, col = COL$resid, lwd = 2.5)
+  points(albert$week, e, pch = 19, cex = 1.4, col = COL$ink)
+  text(14, wk14_res, "week 14", pos = 4, col = COL$resid, font = 2, cex = 1.0)
+
+  h <- hist(e, breaks = seq(-25, 25, 5), plot = FALSE)
+  plot(NA, xlim = c(-25, 25),
+       ylim = c(0, max(h$density, dnorm(0, 0, s_hat)) * 1.25), axes = FALSE,
+       xlab = "residual", ylab = "density")
+  abline(h = pretty(c(0, max(h$density)), 4), col = COL$grid)
+  plot(h, freq = FALSE, add = TRUE, col = alpha(COL$model_lt, 0.8),
+       border = "white")
+  curve(dnorm(x, 0, s_hat), add = TRUE, col = COL$model, lwd = 3)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Their distribution", adj = 0, line = 1.8, cex.main = 1.25,
+        col.main = COL$ink)
+  title(sprintf("Normal(0, %.1f) overlaid", s_hat), adj = 0, line = 0.5,
+        cex.main = 0.95, col.main = COL$muted, font.main = 1)
+
+  qq <- qqnorm(e, plot.it = FALSE)
+  plot(NA, xlim = range(qq$x) * 1.15, ylim = range(qq$y) * 1.15, axes = FALSE,
+       xlab = "expected if normal", ylab = "Albert's residual")
+  abline(h = pretty(qq$y, 5), v = pretty(qq$x, 5), col = COL$grid)
+  qqline(e, col = COL$model, lwd = 2.5)
+  points(qq$x, qq$y, pch = 19, cex = 1.4, col = COL$ink)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Normal Q-Q", adj = 0, line = 1.8, cex.main = 1.25, col.main = COL$ink)
+  title("On the line = bell-shaped", adj = 0, line = 0.5, cex.main = 0.95,
+        col.main = COL$muted, font.main = 1)
+}, height = 340)
+```
+
+::: {.question}
+**Q19.** In week 14 Albert rated his mood `r f1(-wk14_res)` points below the
+line, `r f1(abs(wk14_z))` times $\hat\sigma$. Was it a relapse? Answer as the
+linear world would: how likely is one week this bad, and how likely is it
+that *at least one* of 21 weeks is this bad?
+
+**Q20.** Drop week 14 and refit:
+`lm(mood ~ week, data = albert[albert$week != 14, ])`. How much do the
+estimated weekly gain and its standard error change? Should you drop it?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q19.** In a linear world with $\sigma \approx$ `r f1(s_hat)`, a single week
+this low has a probability of about `r f1(100 * p_low1)`%. But week 14 caught
+our eye *because* it was the worst of 21. The fair question is how often 21
+independent weeks contain at least one this bad:
+$1 - (1 - `r signif(p_low1, 2)`)^{21} \approx$ `r round(100 * p_any21)`%, about
+one course of therapy in `r round(1 / p_any21)`. Within the linear world,
+week 14 needs no special explanation: the weeks after it are back on the
+line. Clinically it is still worth asking Albert what happened. And a
+mechanism with *memory* would read week 14 differently: as a shock whose
+effect might linger. That is a question for a later lecture.
+
+**Q20.** Without week 14 the weekly gain moves from `r f1(b1_hat, 2)` to
+`r f1(coef(fit_no14)[2], 2)` and its standard error from `r f1(se_b1, 3)` to
+`r f1(summary(fit_no14)$coefficients[2, 2], 3)`. The story is the same. But
+a data point is only "bad" if it is *wrong* (a typo, another client's sheet).
+Week 14 is a real week; dropping it would make Albert look steadier and
+faster-improving than he is. Keep it.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+**Residuals** $e_t = y_t - \hat y_t$ as estimates of $\varepsilon_t$; the
+**residual standard deviation** $\hat\sigma$ with $n - 2$ **degrees of
+freedom**; **residual diagnostics**; **standardised residuals**
+$e_t / \hat\sigma$; and the **multiple-comparisons** problem.
+:::
+
+---
+
+# 8. If Albert lived these 20 weeks again
+
+We now have estimated dials. But remember how the story works: every week
+life deals Albert a fresh shock. The 21 shocks he actually got are only one
+of the sets life could have dealt. Had his 20 weeks gone differently in all
+the small everyday ways, the same therapy would have produced a different
+chart, and we would have estimated different dials.
+
+In Part 1 we acted the story out to see **what it produces**. Now we act it
+out again for a new reason: to see **how much our estimate depends on which
+shocks Albert happened to get**. We cannot rerun Albert's life, but we can
+rerun the story, with its dials set to Albert's estimates, thousands of
+times. Each run deals a fresh set of 21 shocks; fitting a line to each run
+shows how much the estimate would wobble.
+
+**Drag the sliders and watch what makes the estimates agree or disagree.**
+
+```{r fig-universes, echo=FALSE}
+inputPanel(
+  sliderInput("pu_R", "How many reruns?",
+              min = 20, max = 2000, value = 200, step = 20, width = "240px"),
+  sliderInput("pu_sigma", "Size of weekly shocks (sigma):",
+              min = 2, max = 20, value = round(s_hat), step = 1, width = "240px"),
+  sliderInput("pu_n", "How many ratings:",
+              min = 5, max = 60, value = 21, step = 1, width = "240px"),
+  radioButtons("pu_span", "Extra ratings come from...",
+               choices = c("a longer therapy (one per week)" = "longer",
+                           "rating more often within the same 20 weeks" = "denser"),
+               selected = "longer", width = "260px"),
+  actionButton("pu_go", "Rerun again")
+)
+
+pu_sims <- reactive({
+  input$pu_go
+  wk <- if (input$pu_span == "longer") 0:(input$pu_n - 1)
+        else seq(0, 20, length.out = input$pu_n)
+  list(weeks = wk,
+       sims  = sim_studies(input$pu_R, input$pu_sigma, weeks = wk))
+})
+
+renderPlot({
+  d  <- pu_sims(); sims <- d$sims; wk <- d$weeks
+  se_theory <- input$pu_sigma / sqrt(sum((wk - mean(wk))^2))
+
+  par(mfrow = c(1, 2)); base_par()
+
+  ends <- c(sims$b0, sims$b0 + sims$b1 * max(wk))
+  yl   <- range(ends) + c(-1, 1) * 0.08 * diff(range(ends))
+  panel(c(-0.6, max(wk) + 0.6), yl, xat = pretty(wk, 5),
+        main = sprintf("%d reruns of Albert's therapy", input$pu_R),
+        sub  = "Each faint line is the line fitted to one rerun")
+  for (i in seq_len(min(nrow(sims), 300)))
+    abline(a = sims$b0[i], b = sims$b1[i],
+           col = alpha(COL$model, 0.08), lwd = 1.5)
+  abline(a = b0_hat, b = b1_hat, col = COL$truth, lwd = 3.5)
+  legend("topleft", bty = "n", lty = 1, lwd = 3.5, col = COL$truth,
+         text.col = COL$ink, cex = 1.0,
+         legend = "world's dials = Albert's estimates")
+
+  hb <- hist(sims$b1, breaks = 40, plot = FALSE)
+  xr <- b1_hat + c(-4, 4) * max(se_theory, 0.05)
+  plot(NA, xlim = xr,
+       ylim = c(0, max(hb$density, dnorm(0, 0, se_theory)) * 1.3),
+       axes = FALSE, xlab = "estimated change per week", ylab = "density")
+  abline(h = pretty(c(0, max(hb$density)), 4), col = COL$grid)
+  plot(hb, freq = FALSE, add = TRUE, col = alpha(COL$model_lt, 0.85),
+       border = "white")
+  curve(dnorm(x, b1_hat, se_theory), add = TRUE, col = COL$model, lwd = 3)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  abline(v = b1_hat, col = COL$truth, lwd = 3)
+  title("How much the estimates disagree", adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+  title(sprintf("spread %.3f     theory sigma/sqrt(Sxx) %.3f",
+                sd(sims$b1), se_theory),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted,
+        font.main = 1)
+}, height = 420)
+```
+
+<div class="keybox">
+
+**That histogram is what a standard error is trying to describe.** We only
+ever get one draw from it, Albert's actual 21 weeks, and from that single
+draw `lm()` estimates how wide the histogram is:
+
+$$\mathrm{SE}(\hat\beta_1) \;=\; \frac{\sigma}{\sqrt{S_{xx}}},
+\qquad S_{xx} = \sum_t (t - \bar t)^2$$
+
+Notice what is *not* in the formula: $\beta_0$ and $\beta_1$. The spread
+depends only on the size of the shocks and on when the ratings were taken, which is why it
+does not matter much that we set this world's dials to our estimates rather
+than to Albert's unknown true ones.
+
+</div>
+
+::: {.question}
+**Q21.** Double the size of the shocks from 8 to 16. What happens to the spread of the
+estimates, and by what factor?
+
+**Q22.** Put $\sigma$ back to 8. You could collect 60 ratings instead of 21 in
+two ways: (a) see Albert weekly for 60 weeks; (b) keep therapy at 20 weeks but
+have him rate his mood about three times a week. Try both. Which steadies the
+estimate more, and why?
+
+**Q23.** The fan of lines is pinched in the middle and splayed at the ends.
+Why? What does that mean for how well we know Albert's mood *at intake* versus
+*at week 10*?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q21.** It exactly doubles: $\sigma$ is in the numerator. This is the causal
+link between (A) and (B). A person whose weeks swing more gives a less
+certain answer to "is he improving?", with the same real improvement.
+
+**Q22.** (a) wins by a long way. Rating more often over the same 20 weeks
+shrinks the standard error from `r f1(8 / sqrt(Sxx), 3)` to about
+`r f1(8 / sqrt(sum((seq(0, 20, length.out = 60) - 10)^2)), 3)`, roughly the
+familiar $\sqrt{n}$ rule: nearly three times the data, only about 1.6 times
+the precision. Extending therapy to 60 weeks shrinks it to about
+`r f1(8 / sqrt(sum(((0:59) - mean(0:59))^2)), 3)`, nearly five times more
+precise, because a slope is best pinned down by points far apart in time.
+
+The catch: this assumes the world stays linear for 60 weeks (Q5 says it
+cannot, forever), and that ratings three times a week are independent of each
+other (Section 3 says that is exactly what the linear world assumes, and
+exactly what real mood data tend to violate).
+
+**Q23.** Every fitted line passes through the average week (week 10) at that
+rerun's average mood, so the lines pivot there, like a seesaw. A small error
+in the slope barely moves the line near week 10 but is magnified further out.
+We know Albert's expected mood mid-therapy far better than at intake, or next
+week. Sections 10 and 11 both follow from this.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+**Simulation from a fitted model** (a parametric bootstrap, informally), the
+**sampling distribution** $\hat\beta_1 \sim \mathcal{N}(\beta_1, \sigma^2 / S_{xx})$,
+and the **standard error** as its standard deviation. **Study design** enters
+through $S_{xx}$.
+:::
+
+::: {.question}
+**Q24.** $\hat\sigma$ is itself an estimate. Use the reruns idea: would you
+expect it to land exactly on the $\sigma$ of the world? What does that mean
+for the standard error `lm()` reports?
+:::
+
+<details>
+<summary>Show the answer</summary>
+
+No. With 19 degrees of freedom, $\hat\sigma$ varies from rerun to rerun by
+roughly ±1.3 around a true $\sigma$ of 8 (and is very slightly biased
+downwards: $\hat\sigma^2$ is unbiased for $\sigma^2$, but its square root
+averages a little under $\sigma$). So the standard error `lm()` reports,
+computed from $\hat\sigma$, is itself uncertain. That is why intervals for the
+slope use a $t$ distribution rather than a normal: the $t$ is the price of
+not knowing $\sigma$.
+
+</details>
+
+---
+
+# 9. How sure can we be? What "95%" means
+
+From Albert's data, `lm()` gives a 95% confidence interval for his weekly
+change of **`r f1(ci_b1[1], 2)` to `r f1(ci_b1[2], 2)`**. What does "95%"
+promise?
+
+It promises something about the **recipe**, not about this interval. To see
+it, we need a world whose dials we *know*, so we can check each interval.
+Below, the world's true weekly change is set to Albert's estimate,
+`r f1(b1_hat, 2)` (the red line), and we rerun the study 2000 times.
+
+```{r fig-coverage, echo=FALSE}
+inputPanel(
+  sliderInput("ci_sigma", "Size of weekly shocks (sigma):",
+              min = 2, max = 20, value = round(s_hat), step = 1, width = "240px"),
+  sliderInput("ci_level", "Confidence level:", min = 0.50, max = 0.99,
+              value = 0.95, step = 0.01, width = "240px"),
+  actionButton("ci_go", "Rerun 100 more studies")
+)
+
+ci_sims <- reactive({
+  input$ci_go
+  s  <- sim_studies(2000, input$ci_sigma)
+  tq <- qt(1 - (1 - input$ci_level) / 2, n - 2)
+  s$lo <- s$b1 - tq * s$se
+  s$hi <- s$b1 + tq * s$se
+  s
+})
+
+renderPlot({
+  s <- ci_sims(); truth <- b1_hat
+  cover <- s$lo <= truth & s$hi >= truth
+  K <- 100
+  base_par(mar = c(4.4, 4.6, 3.4, 1.2))
+  xr <- truth + c(-1, 1) * max(1.2, 1.4 * max(abs(c(s$lo[1:K], s$hi[1:K]) - truth)))
+  plot(NA, xlim = xr, ylim = c(0, K + 1), axes = FALSE,
+       xlab = "interval for the weekly change", ylab = "study number")
+  abline(v = pretty(xr, 6), col = COL$grid)
+  abline(v = truth, col = COL$truth, lwd = 3)
+  abline(v = 0, col = COL$muted, lty = 3, lwd = 1.5)
+  for (i in 1:K) {
+    hit <- cover[i]
+    cc  <- if (hit) alpha(COL$model, 0.5) else COL$ink
+    segments(s$lo[i], i, s$hi[i], i, col = cc, lwd = if (hit) 2 else 3.5)
+    points(s$b1[i], i, pch = 19, cex = if (hit) 0.6 else 1.0, col = cc)
+  }
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, at = c(1, 25, 50, 75, 100), col = COL$grid, col.ticks = COL$muted)
+  title(sprintf("%d%% intervals from 100 reruns", round(100 * input$ci_level)),
+        adj = 0, line = 2.0, cex.main = 1.3, col.main = COL$ink)
+  title(sprintf(
+    "bold black = missed the true value (%d of these 100;  %.1f%% over 2000)",
+    sum(!cover[1:K]), 100 * mean(cover)),
+    adj = 0, line = 0.6, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 460)
+```
+
+::: {.question}
+**Q25.** Is it right to say *"there is a 95% probability that Albert's true
+weekly change lies between `r f1(ci_b1[1], 2)` and `r f1(ci_b1[2], 2)`"*?
+
+**Q26.** Drop the confidence level to 0.50 and rerun a few times. The intervals
+get much shorter. Is a shorter interval a better answer?
+
+**Q27.** Raise $\sigma$ to 20. Coverage stays near 95%. So what has gone
+wrong?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q25.** Not quite. Albert's true $\beta_1$ (if he has one) is a fixed
+number; this interval either contains it or it does not. The 95% describes the
+long-run behaviour of the recipe: across many studies, about 95 in 100
+intervals catch the truth, which is what the figure shows. A defensible
+sentence: *"Albert's mood improved by an estimated `r f1(b1_hat)` points per
+week (95% CI `r f1(ci_b1[1])` to `r f1(ci_b1[2])`)."* And note the fine print:
+this is 95% **if the linear world is the right world**. If the mechanism is
+different, for example if weeks carry over into each other, the recipe's
+promise no longer holds.
+
+**Q26.** No. At 50% the intervals miss the truth half the time. You can have
+any width you like by accepting being wrong more often. The only honest way to
+a narrower interval is better data: smaller shocks, more ratings, a longer span.
+
+**Q27.** The intervals are now very wide, typically about
+±`r f1(qt(0.975, n - 2) * 20 / sqrt(Sxx))` points a week, and many reach down
+to zero (the dotted line). The procedure is still *valid* (right 95% of the
+time) but no longer *useful*: an interval from about zero to three points a
+week is consistent with almost no change and with rapid improvement. For a
+very changeable person, 21 weeks may simply not be enough to tell.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+The **confidence interval**
+$\hat\beta_1 \pm t_{0.975,\,n-2} \cdot \mathrm{SE}(\hat\beta_1)$ and its
+frequentist meaning: **coverage** is a property of the procedure, and it is
+guaranteed only if the model is the right one.
+:::
+
+---
+
+# 10. His expected mood versus next week's rating
+
+Two questions that sound alike and are not:
+
+- **Where is Albert's expected mood at week $t$?** This is uncertainty about the
+  line: the **confidence band**.
+- **Where will one actual week land?** This is uncertainty about the line
+  **plus** next week's shock: the **prediction band**.
+
+$$\mathrm{SE}(\text{expected mood at } t) = \sigma\sqrt{\tfrac{1}{n} + \tfrac{(t-\bar t)^2}{S_{xx}}}
+\qquad
+\mathrm{SE}(\text{one actual week at } t) = \sigma\sqrt{1 + \tfrac{1}{n} + \tfrac{(t-\bar t)^2}{S_{xx}}}$$
+
+The extra **1** is variability (A). More data shrinks everything else. It
+cannot shrink that.
+
+```{r fig-bands, echo=FALSE}
+inputPanel(
+  sliderInput("bd2_n", "Ratings collected over the 20 weeks:",
+              min = 5, max = 200, value = 21, step = 1, width = "300px"),
+  checkboxInput("bd2_conf", "Confidence band (expected mood)", TRUE),
+  checkboxInput("bd2_pred", "Prediction band (one actual week)", TRUE)
+)
+
+renderPlot({
+  nn <- input$bd2_n
+  if (nn == 21) {
+    wk <- albert$week; y <- albert$mood
+  } else {
+    wk <- seq(0, 20, length.out = nn)
+    y  <- with_seed(99, b0_hat + b1_hat * wk + rnorm(nn, 0, s_hat))
+  }
+  f2 <- lm(y ~ wk)
+  nd <- data.frame(wk = seq(0, 20, length.out = 200))
+  pc <- predict(f2, nd, interval = "confidence")
+  pp <- predict(f2, nd, interval = "prediction")
+
+  base_par()
+  panel(c(-0.6, 20.6), c(10, 105), xat = seq(0, 20, 5),
+        main = "Where is his expected mood?  vs.  Where will one week land?",
+        sub  = sprintf("%d ratings%s   width at week 20:  confidence %.1f,  prediction %.1f",
+                       nn, if (nn == 21) " (Albert)" else " (simulated)",
+                       diff(pc[200, 2:3]), diff(pp[200, 2:3])))
+  if (isTRUE(input$bd2_pred))
+    polygon(c(nd$wk, rev(nd$wk)), c(pp[, "lwr"], rev(pp[, "upr"])),
+            col = alpha(COL$model_lt, 0.40), border = NA)
+  if (isTRUE(input$bd2_conf))
+    polygon(c(nd$wk, rev(nd$wk)), c(pc[, "lwr"], rev(pc[, "upr"])),
+            col = alpha(COL$model, 0.32), border = NA)
+  lines(nd$wk, pc[, "fit"], col = COL$model, lwd = 3.5)
+  points(wk, y, pch = 19, cex = if (nn > 60) 0.8 else 1.5,
+         col = alpha(COL$ink, if (nn > 60) 0.45 else 1))
+  legend("topleft", bty = "n", border = NA,
+         fill = c(alpha(COL$model, 0.32), alpha(COL$model_lt, 0.40)),
+         legend = c("95% confidence band", "95% prediction band"),
+         text.col = COL$ink, cex = 1.05)
+}, height = 420)
+```
+
+For **week 21**, the next session:
+
+```{r week21, echo=TRUE}
+predict(fit, data.frame(week = 21), interval = "confidence")  # his expected mood
+predict(fit, data.frame(week = 21), interval = "prediction")  # one actual week
+```
+
+::: {.question}
+**Q28.** Imagine Albert had rated his mood on his phone every day or two, 200
+ratings over the same 20 weeks. Drag the slider up. What happens to each band?
+
+**Q29.** Nora wants a rule: *"If next week's rating is below __, I will raise
+it with Albert as a possible setback."* Which band, and what number? Which
+band would a researcher comparing how fast clients improve under two
+therapies need?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q28.** The confidence band shrinks towards the line: with enough ratings,
+the expected trajectory is known almost exactly. The prediction band barely
+moves; it settles at about ±2σ and stays there. More data buys certainty
+about **Albert's expected mood**, almost nothing about **how any one week
+will go**.
+
+**Q29.** The prediction band, because she is asking about one future rating
+from one person: its lower limit for week 21 is about
+**`r round(pi21[, "lwr"])`**. (Using the confidence band's lower limit,
+about `r round(ci21[, "lwr"])`, she would "detect a setback" in many
+perfectly ordinary weeks.) The researcher needs the confidence band, or the
+interval for the slope, because they are asking about *average* change.
+Quoting a narrow confidence interval as though it described what individual
+clients can expect makes a treatment sound far more predictable than it is.
+
+And the rule inherits every claim of the linear world: that Albert keeps
+improving at the same rate, and that last week tells you nothing about next
+week. The line reaches 100 around week `r round(hits_100)`, so the rule
+certainly cannot be used for long.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+The **confidence interval for the mean response** versus the **prediction
+interval for a new observation**, and the danger of **extrapolation**.
+:::
+
+---
+
+# 11. Where you put zero
+
+Back to Q16: a lower start and a steeper climb fitted almost as well. That
+trade-off is a consequence of the pivot in Section 8. The intercept is the
+line's height at week 0, the very edge of the data, ten weeks from the pivot,
+so it catches the full swing of any error in the slope.
+
+But "week 0" is our choice. **Slide the zero.** Nothing about Albert changes,
+only where we read off his level.
+
+```{r fig-centring, echo=FALSE}
+inputPanel(
+  sliderInput("cz_zero", "Read off Albert's level at week:",
+              min = 0, max = 20, value = 0, step = 1, width = "320px")
+)
+
+renderPlot({
+  z  <- input$cz_zero
+  wz <- albert$week - z
+  fz <- lm(albert$mood ~ wz)
+  V  <- vcov(fz)
+  rho <- V[1, 2] / sqrt(V[1, 1] * V[2, 2])
+  ell <- conf_ellipse(V, coef(fz), df = n - 2)
+
+  par(mfrow = c(1, 2)); base_par()
+
+  panel(c(-0.6, 20.6), c(20, 95), xat = seq(0, 20, 5),
+        main = "Same data, same line",
+        sub  = sprintf("level at week %d:  %.1f +/- %.1f",
+                       z, coef(fz)[1], 1.96 * sqrt(V[1, 1])))
+  abline(fit, col = COL$model, lwd = 3.5)
+  points(albert$week, albert$mood, pch = 19, cex = 1.4,
+         col = alpha(COL$ink, 0.35))
+  mu <- coef(fz)[1]; seI <- sqrt(V[1, 1])
+  segments(z, mu - 1.96*seI, z, mu + 1.96*seI, col = COL$resid, lwd = 6)
+  points(z, mu, pch = 19, cex = 2, col = COL$resid)
+  abline(v = mean(albert$week), col = COL$muted, lty = 3, lwd = 2)
+  text(mean(albert$week), 93, "pivot (mean week)", col = COL$muted,
+       cex = 1.0, pos = if (z > 10) 2 else 4)
+  text(z, 24, sprintf("SE of level = %.2f", seI), col = COL$resid,
+       font = 2, cex = 1.1, pos = if (z > 10) 2 else 4)
+
+  plot(NA, xlim = coef(fz)[1] + c(-10.5, 10.5),
+       ylim = coef(fz)[2] + c(-1.1, 1.1),
+       axes = FALSE, xlab = sprintf("level at week %d", z),
+       ylab = "change per week")
+  abline(h = pretty(coef(fz)[2] + c(-1.1, 1.1), 5),
+         v = pretty(coef(fz)[1] + c(-10.5, 10.5), 5), col = COL$grid)
+  polygon(ell, col = alpha(COL$model, 0.25), border = COL$model, lwd = 2.5)
+  points(coef(fz)[1], coef(fz)[2], pch = 19, cex = 1.5, col = COL$resid)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Level and change, jointly", adj = 0, line = 1.8,
+        cex.main = 1.25, col.main = COL$ink)
+  title(sprintf("correlation between the two estimates = %+.2f", rho),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted,
+        font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q30.** Slide from week 0 to week 20. Where is Albert's level pinned down
+best, and where is the ellipse upright? Why there?
+
+**Q31.** Does the uncertainty about the *weekly change* (the vertical extent of
+the ellipse) change as you slide?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q30.** At week 10, the mean week and the pivot. The standard error of the
+level falls from `r f1(sqrt(vcov(fit)[1, 1]), 2)` at intake to
+`r f1(sqrt(vcov(lm(mood ~ I(week - 10)))[1, 1]), 2)` at week 10, and the two
+estimates become uncorrelated. Before week 10 the correlation is negative
+(a higher level goes with a flatter climb, the trade-off from Q16); after it,
+positive.
+
+**Q31.** No. Moving zero changes where you read the line's height, not how
+steep it is. **Uncertainty about the level depends on where you choose to
+measure it; uncertainty about the rate of change is a real property of the
+data.** In R, reading the level at mid-therapy is just **centring**:
+`lm(mood ~ I(week - 10))`. In the multilevel and dynamic models later in this
+course, where each person's own level matters, where you put zero decides
+what that number means and how well it is estimated.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+**Centring** a predictor; the **covariance of the coefficient estimates**,
+`vcov(fit)`; the **joint confidence region** for $(\beta_0, \beta_1)$.
+:::
+
+---
+
+# 12. What Lecture 1 lets us say about Albert
+
+::: {.question}
+**Q32.** Before opening the box, write a short paragraph (at most 150 words)
+for Nora: what does the linear model say about Albert, how sure can she be,
+what should she expect next? Then add one sentence about what the model
+*assumes* that you are not sure is true.
+:::
+
+<details>
+<summary>Show one version</summary>
+
+<div class="report">
+
+*If Albert's mood follows a straight-line trend with independent weekly
+shocks,* his expected mood rose by about **`r f1(b1_hat)` points per week**
+(95% CI `r f1(ci_b1[1])` to `r f1(ci_b1[2])`), from about `r round(b0_hat)` at
+intake to about `r round(fit_20)` at week 20. A trend this strong would be
+very unlikely in a world where he was not changing ($p <$ .001). Individual
+weeks scatter around that trend by about ±`r round(s_hat)` points; week 14,
+`r round(-wk14_res)` points below trend, is the kind of week that turns up in
+about one course of therapy in `r round(1 / p_any21)`. Next week's rating
+would be expected around `r round(pi21[, "fit"])`, anywhere from roughly
+`r round(pi21[, "lwr"])` to `r round(pi21[, "upr"])`.
+
+*What I am not sure of:* that his weeks are independent. If a bad week
+carries over into the next, these intervals are too narrow.
+
+</div>
+
+</details>
+
+<div class="keybox">
+
+**The model of Lecture 1**
+
+$$\text{Mood}_t \;=\; \beta_0 + \beta_1\,t + \varepsilon_t,
+\qquad \varepsilon_t \sim \mathcal{N}(0, \sigma)\ \text{independently}$$
+
+| | As a mechanism | Albert's estimate |
+|---|---|---|
+| $\beta_0$ | his expected mood at intake | `r f1(b0_hat)` |
+| $\beta_1$ | steady change per week, driven by time | `r f1(b1_hat, 2)` |
+| $\sigma$ | size of life's memoryless weekly shocks: **variability (A)** | `r f1(s_hat, 2)` |
+| $\mathrm{SE}(\hat\beta_1)$ | not part of the mechanism: how much one 21-week series tells us, **variability (B)** | `r f1(se_b1, 3)` |
+
+**The linear world can produce data like Albert's** (Section 4). That is not
+the same as being his mechanism. It says change is steady and never ends,
+that it is driven by time rather than by Albert's own state, that
+fluctuations leave no trace, and that his unpredictability never changes.
+**Next lecture** we drop the third claim and let this week depend on last
+week.
+
+</div>
+
+---
+
+# 13. Exercises
+
+**E1. Does a bad week spill into the next?**
+Run `acf(resid(fit))` and look at lag 1. If Albert's residuals were
+*positively* correlated from one week to the next, would the standard error
+`lm()` reports be too large or too small? Why is that the dangerous direction?
+
+<details>
+<summary>Hint</summary>
+
+Here the lag-1 autocorrelation is about
+`r f1(acf(resid(fit), plot = FALSE)$acf[2], 2)`: small, and with 21 weeks
+hard to distinguish from zero. With positive carry-over, consecutive weeks
+partly repeat each other, so 21 weeks hold *less* independent information than
+21 separate observations would. `lm()` counts all 21 fully, believes it knows
+more than it does, and reports a standard error that is **too small**:
+intervals too narrow, p-values too low, overconfident conclusions. Carry-over
+is the rule, not the exception, in intensive repeated measures.
+
+</details>
+
+**E2. Simulate the violation.**
+Adapt the one-line recipe from Section 1 so that each week's shock carries
+over half of last week's shock:
+`eps[t] <- 0.5 * eps[t - 1] + rnorm(1, 0, sigma)`. Simulate 2000 Alberts
+from this world, fit `lm(mood ~ week)` to each, and compare (a) the actual
+spread of the slopes with (b) the average standard error `lm()` reports. What
+do you find, and what does it mean for Q25?
+
+**E3. A more changeable Albert.**
+In Section 8, predict before you drag: if $\sigma$ goes from 8 to 12, by what
+factor does the spread of estimated slopes grow? How long would you need to
+observe a very changeable client before you could say whether therapy is
+working?
+
+**E4. From time to state.**
+The linear model says *time* drives Albert's mood. A dynamic model says *last
+week's mood* does. Fit
+
+```{r e4, eval=FALSE, echo=TRUE}
+m  <- albert$mood
+wk <- albert$week
+summary(lm(m[-1] ~ m[-21]))              # this week from last week
+summary(lm(m[-1] ~ m[-21] + wk[-1]))     # ... and from the trend as well
+```
+
+What does the coefficient on last week's mood mean in the first model? What
+happens to it in the second, and why?
+
+<details>
+<summary>Hint</summary>
+
+In the first model it is about 0.66, which looks like strong *inertia*, mood
+carrying over from week to week. With the trend included it collapses to
+about −0.2 and is far from significant. Because Albert improves steadily, last
+week's mood tells you roughly how far into therapy he is, and so roughly how
+good next week will be: the "inertia" was the trend in disguise. Telling a
+trend apart from genuine carry-over is one of the central problems of
+dynamic modelling, and the starting point of next lecture.
+
+</details>
+
+---
+
+<p style="color:#898781; font-size:0.9em; margin-top:3em;">
+Little Albert refers to Watson, J. B., &amp; Rayner, R. (1920). Conditioned
+emotional reactions. <em>Journal of Experimental Psychology, 3</em>(1), 1–14.
+The grown-up Albert, his therapist and his mood ratings are fictional.
+Rendered with R and Shiny; no packages beyond <code>shiny</code> are required.
+</p>
