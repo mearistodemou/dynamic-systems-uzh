@@ -1,0 +1,1533 @@
+---
+title: "Lecture 2 · Albert among Others"
+subtitle: "Individual differences, pooling, and the multilevel model"
+author: "Dynamic Systems Thinking for Psychologists"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float:
+      collapsed: false
+    toc_depth: 1
+    df_print: kable
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+library(shiny)
+library(lme4)
+```
+
+```{css, echo=FALSE}
+body { font-size: 16px; }
+h1 { margin-top: 1.6em; }
+details {
+  background: #f4f7fb;
+  border-left: 4px solid #2a78d6;
+  padding: 0.6em 1em;
+  margin: 1em 0 1.6em 0;
+  border-radius: 4px;
+}
+details > summary { cursor: pointer; font-weight: 600; color: #1c5cab; }
+details[open] > summary { margin-bottom: 0.8em; }
+.question {
+  background: #fff8f2;
+  border-left: 4px solid #eb6834;
+  padding: 0.8em 1em;
+  margin: 1.4em 0 0.4em 0;
+  border-radius: 4px;
+}
+.question p:first-child { margin-top: 0; }
+.question p:last-child  { margin-bottom: 0; }
+.keybox {
+  background: #eef4fc;
+  border: 1px solid #b7d3f6;
+  padding: 1em 1.2em;
+  border-radius: 6px;
+  margin: 1.4em 0;
+}
+.tool {
+  border-top: 1px solid #d6d4cc;
+  border-bottom: 1px solid #d6d4cc;
+  padding: 0.6em 0;
+  margin: 1.4em 0;
+  color: #3d3c38;
+}
+.tool > p:first-child { margin-top: 0; }
+.tool strong.tag {
+  font-variant: small-caps; letter-spacing: 0.04em; color: #898781;
+}
+.report {
+  background: #fbfaf6;
+  border: 1px solid #e1e0d9;
+  border-left: 4px solid #0b0b0b;
+  font-family: Georgia, serif;
+  padding: 1em 1.3em;
+  margin: 1.4em 0;
+}
+.part {
+  margin: 2.4em 0 0.4em 0;
+  padding: 0.5em 0.9em;
+  background: #0b0b0b;
+  color: #fcfcfb;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+}
+.shiny-input-container { margin-bottom: 4px; }
+```
+
+
+
+```{r data, echo=TRUE}
+# Albert's 21 weekly mood ratings, exactly as in Lecture 1.
+albert <- data.frame(week = 0:20,
+                     mood = c(46, 35, 46, 46, 43, 30, 46, 45, 56, 53, 55,
+                              54, 59, 61, 44, 77, 73, 71, 64, 78, 71))
+```
+
+```{r clinic-data, echo=FALSE}
+# The other 29 clients of Albert's clinic. They are simulated from a two-level
+# story (Section 1) with fixed dials and a fixed seed, so everyone gets the
+# same clinic. Keep the dials to yourself until Section 8.
+make_clinic <- function(seed) {
+  set.seed(seed)
+  J <- 29
+  g00 <- 40; g10 <- 1.0; t0 <- 7; t1 <- 0.5; rho <- -0.3; sig <- 8
+  S <- matrix(c(t0^2, rho * t0 * t1, rho * t0 * t1, t1^2), 2)
+  L <- t(chol(S)); u <- t(L %*% matrix(rnorm(2 * J), 2))
+  b0 <- g00 + u[, 1]; b1 <- g10 + u[, 2]
+  nobs <- sample(c(rep(21, 20), sample(4:10, 9, replace = TRUE)))
+  d <- do.call(rbind, lapply(1:J, function(j) {
+    wk <- 0:(nobs[j] - 1)
+    data.frame(client = j, week = wk,
+               mood = pmin(pmax(round(b0[j] + b1[j] * wk +
+                                      rnorm(length(wk), 0, sig)), 0), 100))
+  }))
+  list(d = d, b0 = b0, b1 = b1)
+}
+cl_sim <- make_clinic(30)
+others <- cl_sim$d; others$client <- others$client + 1
+clinic <- rbind(data.frame(client = 1, albert), others)
+TRUE_B1_OTHERS <- cl_sim$b1          # true slopes of clients 2-30 (not Albert)
+TRUE_B0_OTHERS <- cl_sim$b0
+
+ids   <- sort(unique(clinic$client))
+label <- paste("Client", ids); label[1] <- "Albert"; label[6] <- "Jonas"; label[14] <- "Lena"
+clinic$name <- factor(label[clinic$client], levels = label)
+n_i   <- as.vector(table(clinic$client))
+ID_A <- 1; ID_J <- 6; ID_L <- 14
+```
+
+```{r helpers, echo=FALSE}
+COL <- list(
+  ink = "#0b0b0b", muted = "#898781", grid = "#e1e0d9",
+  model = "#2a78d6", model_lt = "#9ec5f4", resid = "#eb6834",
+  truth = "#e34948", dark = "#104281", up = "#2f9e6e", hi = "#8a4fc9"
+)
+alpha <- function(col, a) rgb(t(col2rgb(col)), alpha = a * 255, maxColorValue = 255)
+
+base_par <- function(...)
+  par(mar = c(4.4, 4.6, 3.2, 1.2), mgp = c(2.8, 0.7, 0), las = 1,
+      col.axis = COL$muted, fg = COL$muted, tcl = -0.3,
+      cex.lab = 1.1, cex.axis = 1.0, ...)
+
+panel <- function(xlim, ylim, xlab = "Week of therapy", ylab = "Mood (0-100)",
+                  main = "", sub = "", xat = NULL, yat = NULL) {
+  plot(NA, xlim = xlim, ylim = ylim, xlab = xlab, ylab = ylab, axes = FALSE)
+  if (is.null(xat)) xat <- pretty(xlim, 6)
+  if (is.null(yat)) yat <- pretty(ylim, 6)
+  abline(h = yat, v = xat, col = COL$grid, lwd = 1)
+  axis(1, at = xat, col = COL$grid, col.ticks = COL$muted)
+  axis(2, at = yat, col = COL$grid, col.ticks = COL$muted)
+  if (nzchar(main))
+    title(main = main, adj = 0, line = 1.8, cex.main = 1.3,
+          col.main = COL$ink, font.main = 2)
+  if (nzchar(sub))
+    title(main = sub, adj = 0, line = 0.5, cex.main = 0.98,
+          col.main = COL$muted, font.main = 1)
+}
+
+# The two-level story: J clients, each with their own dials, all observed on
+# the same weeks. Returns the dials and a (weeks x J) matrix of ratings.
+two_level_world <- function(J, g00, g10, tau0, tau1, rho, sigma, weeks = 0:20) {
+  z0 <- rnorm(J); z1 <- rho * z0 + sqrt(1 - rho^2) * rnorm(J)
+  b0 <- g00 + tau0 * z0; b1 <- g10 + tau1 * z1
+  Y  <- outer(weeks, b1) + matrix(b0, length(weeks), J, byrow = TRUE) +
+        matrix(rnorm(length(weeks) * J, 0, sigma), length(weeks), J)
+  list(b0 = b0, b1 = b1, Y = Y, weeks = weeks)
+}
+
+# Each client's own least-squares slope, for clients observed on the same weeks.
+ols_slopes <- function(Y, weeks) {
+  xc <- weeks - mean(weeks)
+  as.vector(crossprod(xc, Y)) / sum(xc^2)
+}
+
+Sxx_n <- function(n) n * (n^2 - 1) / 12      # spread of weeks 0, 1, ..., n-1
+
+dials2 <- function(id, g10 = 1, tau0 = 7, tau1 = 0.5, rho = -0.3, sigma = 8)
+  list(
+    sliderInput(paste0(id, "_g10"), "Typical change per week (gamma10):",
+                min = -1, max = 3, value = g10, step = 0.1, width = "230px"),
+    sliderInput(paste0(id, "_t0"), "Spread of starting levels (tau0):",
+                min = 0, max = 15, value = tau0, step = 0.5, width = "230px"),
+    sliderInput(paste0(id, "_t1"), "Spread of change per week (tau1):",
+                min = 0, max = 2, value = tau1, step = 0.05, width = "230px"),
+    sliderInput(paste0(id, "_rho"), "Start vs. change correlation (rho):",
+                min = -0.9, max = 0.9, value = rho, step = 0.1, width = "230px"),
+    sliderInput(paste0(id, "_sg"), "Size of weekly shocks (sigma):",
+                min = 0, max = 20, value = sigma, step = 0.5, width = "230px")
+  )
+```
+
+```{r numbers, echo=FALSE}
+f1 <- function(x, d = 1) formatC(x, format = "f", digits = d)
+pct <- function(x) round(100 * x)
+
+fit_A  <- lm(mood ~ week, data = albert)                 # Lecture 1
+b1_A   <- unname(coef(fit_A)[2]); b0_A <- unname(coef(fit_A)[1])
+ci_A   <- confint(fit_A)["week", ]
+
+# complete pooling
+m_cp   <- lm(mood ~ week, data = clinic)
+cp     <- coef(m_cp); se_cp <- summary(m_cp)$coefficients["week", "Std. Error"]
+
+# no pooling: each client's own line
+np     <- t(sapply(split(clinic, clinic$client),
+                   function(x) coef(lm(mood ~ week, data = x))))
+np_se  <- sapply(split(clinic, clinic$client), function(x)
+                 summary(lm(mood ~ week, data = x))$coefficients["week", "Std. Error"])
+
+# partial pooling: the multilevel model
+m_re   <- lmer(mood ~ week + (week | client), data = clinic)
+g_hat  <- fixef(m_re); se_g <- sqrt(diag(vcov(m_re)))
+vc     <- VarCorr(m_re)$client
+tau0_h <- attr(vc, "stddev")[1]; tau1_h <- attr(vc, "stddev")[2]
+rho_h  <- attr(vc, "correlation")[1, 2]; sig_h <- sigma(m_re)
+pp     <- as.matrix(coef(m_re)$client)                   # each client's pooled line
+
+pct_A_pp <- pnorm((pp[ID_A, 2] - g_hat[2]) / tau1_h)
+pct_A_np <- pnorm((np[ID_A, 2] - g_hat[2]) / tau1_h)
+w_n      <- function(n, t1 = tau1_h, s = sig_h) t1^2 / (t1^2 + s^2 / Sxx_n(n))
+n_half   <- min(which(sapply(2:60, w_n) > 0.5)) + 1
+
+rmse_np <- sqrt(mean((np[-1, 2] - TRUE_B1_OTHERS)^2))
+rmse_pp <- sqrt(mean((pp[-1, 2] - TRUE_B1_OTHERS)^2))
+```
+
+# How to use this document
+
+Open it in RStudio and click **Run Document** (or run
+`rmarkdown::run("lecture02_individual_differences.Rmd")`). It needs the
+`shiny` and `lme4` packages.
+
+- **Orange boxes** are questions. Answer them, in writing, *before* opening the
+  blue box underneath.
+- **Sliders** are there to be moved.
+- **Grey-ruled boxes** name the statistical tool you have just used.
+
+---
+
+# Where we are: is therapy going well for Albert?
+
+In Lecture 1 we told the simplest story about Albert's mood: therapy moves his
+expected mood along a straight line, and every week life adds a shock. Fitted
+to his 21 ratings, the story says his mood rises by about
+**`r f1(b1_A, 2)` points per week** (95% CI `r f1(ci_A[1], 2)` to
+`r f1(ci_A[2], 2)`).
+
+```{r fig-albert, echo=FALSE}
+renderPlot({
+  base_par()
+  panel(c(-0.6, 20.6), c(20, 90), xat = seq(0, 20, 5),
+        main = "Albert's 21 weeks and his line from Lecture 1",
+        sub = sprintf("mood = %.1f + %.2f x week", b0_A, b1_A))
+  abline(fit_A, col = COL$model, lwd = 3.5)
+  points(albert$week, albert$mood, pch = 19, cex = 1.7, col = COL$ink)
+}, height = 360)
+```
+
+His therapist Nora now wants to know something Lecture 1 cannot answer:
+
+> **Is therapy going *well* for Albert?**
+
+::: {.question}
+**Q1.** Albert's mood rises by about `r f1(b1_A, 1)` points a week. Is that
+good? Write down what you would need to know to answer.
+:::
+
+<details>
+<summary>Show the answer</summary>
+
+On its own, a slope is just a number. To call it good, slow or worrying you
+need a **reference**: how fast do clients like Albert, in this therapy, with
+this questionnaire, usually improve? And how much do they differ? A weekly
+gain of `r f1(b1_A, 1)` is exceptional if nearly everyone gains about 0.5, but
+ordinary if clients range from −1 to +4.
+
+That is exactly what clinics do in *routine outcome monitoring*: a client's
+progress is compared with the expected recovery curves of similar clients, and
+those who fall off track are flagged. To do it, we need a story that is not
+just about Albert but about **clients in general**, and about how Albert
+relates to them.
+
+</details>
+
+This lecture tells that story. Part 1 builds and explores a **two-level
+story**: a story about how each client's dials come about, as well as how
+each week's rating comes about. Part 2 fits it to Albert's clinic, step by
+step: one line for everyone, a separate line for each client, and finally the
+multilevel model, which does both at once.
+
+---
+
+<div class="part">Part 1 · A clinic of Alberts</div>
+
+# 1. A story with two levels
+
+Lecture 1's story had three dials, $\beta_0$, $\beta_1$ and $\sigma$, and
+they belonged to Albert. But every client has their own. Some start lower,
+some improve faster, some hardly change at all. So the story needs a second
+level.
+
+**Level 1: how a client's weeks go.** Exactly Lecture 1's story, now for
+client $i$, with that client's own dials:
+
+$$\text{Mood}_{it} = \beta_{0i} + \beta_{1i}\, t + \varepsilon_{it},
+\qquad \varepsilon_{it} \sim \mathcal{N}(0, \sigma)$$
+
+**Level 2: where a client's dials come from.** Each client's starting level
+and rate of change are drawn from the clinic's *population* of clients:
+
+$$\beta_{0i} \sim \mathcal{N}(\gamma_{00}, \tau_0), \qquad
+\beta_{1i} \sim \mathcal{N}(\gamma_{10}, \tau_1)$$
+
+with a correlation $\rho$ between the two (do clients who start lower tend to
+improve faster?).
+
+As code, it is Lecture 1's loop with an outer loop wrapped around it:
+
+```{r recipe2, eval=FALSE, echo=TRUE}
+for (i in 1:n_clients) {                       # level 2: who you are
+  b0_i <- rnorm(1, g00, tau0)                  #   this client's starting level
+  b1_i <- rnorm(1, g10, tau1)                  #   this client's rate of change
+  for (t in 0:20) {                            # level 1: how your weeks go
+    mood[i, t + 1] <- b0_i + b1_i * t + rnorm(1, 0, sigma)
+  }
+}
+```
+
+(For simplicity this sketch leaves out $\rho$; the widget below includes it.)
+
+| Dial | What it claims |
+|---|---|
+| $\gamma_{00}$ | the typical client's expected mood at intake |
+| $\gamma_{10}$ | the typical client's change per week |
+| $\tau_0$ | how much clients differ in where they start |
+| $\tau_1$ | how much clients differ in how fast they change |
+| $\rho$ | whether starting level and rate of change go together |
+| $\sigma$ | the size of life's weekly shocks, within a client |
+
+**Open a clinic.** Each line is one client's expected mood; the dots are the
+ratings life would produce. The right panel shows the population of rates of
+change that clients are drawn from, and where a weekly gain like Albert's
+would sit in it.
+
+```{r fig-clinic-sim, echo=FALSE}
+do.call(inputPanel, c(dials2("cs"), list(
+  checkboxInput("cs_pts", "Show weekly ratings", FALSE),
+  actionButton("cs_go", "Open a new clinic")
+)))
+
+cs_sim <- reactive({
+  input$cs_go
+  two_level_world(12, 40, input$cs_g10, input$cs_t0, input$cs_t1,
+                  input$cs_rho, input$cs_sg)
+})
+
+renderPlot({
+  w <- cs_sim(); wk <- w$weeks
+  cols <- hcl.colors(12, "Dark 3")
+  par(mfrow = c(1, 2)); base_par()
+
+  yl <- range(c(0, 100, outer(wk, w$b1) + matrix(w$b0, 21, 12, byrow = TRUE)))
+  panel(c(-0.6, 20.6), yl, xat = seq(0, 20, 5),
+        main = "12 clients, own dials",
+        sub = "lines = each client's expected mood")
+  for (j in 1:12) {
+    if (isTRUE(input$cs_pts))
+      points(wk, w$Y[, j], pch = 19, cex = 0.7, col = alpha(cols[j], 0.6))
+    abline(a = w$b0[j], b = w$b1[j], col = cols[j], lwd = 2.5)
+  }
+
+  g10 <- input$cs_g10; t1 <- max(input$cs_t1, 0.01)
+  xr <- range(c(-1, 4, g10 + c(-3.5, 3.5) * t1))
+  plot(NA, xlim = xr, ylim = c(0, dnorm(0, 0, t1) * 1.25), axes = FALSE,
+       xlab = "a client's change per week (beta1)", ylab = "")
+  abline(v = pretty(xr, 6), col = COL$grid)
+  xs <- seq(xr[1], xr[2], length.out = 400)
+  polygon(c(xs, rev(xs)), c(dnorm(xs, g10, t1), rep(0, 400)),
+          col = alpha(COL$model_lt, 0.6), border = COL$model, lwd = 2)
+  hi <- xs >= b1_A
+  polygon(c(xs[hi], rev(xs[hi])), c(dnorm(xs[hi], g10, t1), rep(0, sum(hi))),
+          col = alpha(COL$model, 0.7), border = NA)
+  points(w$b1, rep(dnorm(0, 0, t1) * 0.04, 12), pch = 19, col = cols, cex = 1.4)
+  abline(v = b1_A, col = COL$resid, lwd = 3, lty = 2)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  title("Population of change rates", adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+  title(sprintf("%.2f per week beats %.0f%% of clients",
+                b1_A, 100 * pnorm(b1_A, g10, t1)),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q2.** Set both spreads, $\tau_0$ and $\tau_1$, to 0. What does the clinic
+look like? What story is this?
+
+**Q3.** Now keep $\tau_1 = 0$ but set $\tau_0 = 10$. Clients differ, but in
+what way? Is therapy "working equally well" for all of them?
+
+**Q4.** With $\gamma_{10} = 1$ and $\tau_1 = 0.5$, how exceptional is a
+weekly gain of `r f1(b1_A, 2)`? Now set $\tau_1 = 1.5$. What changed, and what
+does that say about whether Albert's slope is "good"?
+
+**Q5.** Set $\rho$ to −0.7. What pattern appears in the left panel? Why might
+it be plausible for real clients?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q2.** Every client has the same expected line; their charts differ only
+through life's shocks. It is Lecture 1's story applied to everyone at once:
+a clinic of identical Alberts. Any differences you see between clients'
+charts are luck.
+
+**Q3.** Parallel lines. Clients start at different levels but improve at the
+same rate. Therapy adds the same amount per week for everyone, yet clients
+who started low are still low after 20 weeks. Whether that counts as "working
+equally well" depends on whether you care about change or about where people
+end up, and that is a clinical question, not a statistical one.
+
+**Q4.** With $\tau_1 = 0.5$, a gain of `r f1(b1_A, 2)` is faster than about
+`r pct(pnorm(b1_A, 1, 0.5))`% of clients: exceptional. With $\tau_1 = 1.5$ it
+beats only about `r pct(pnorm(b1_A, 1, 1.5))`%: good, not remarkable. The
+same number for Albert means different things depending on **how much clients
+differ**. "Good" is always relative to a population, and $\tau_1$ describes
+that population as much as $\gamma_{10}$ does.
+
+**Q5.** A fan that narrows over time: clients who start low climb faster and
+catch up. Plausible reasons: people who start lower have more room to
+improve; very low intake ratings are partly bad-luck weeks, which fade (the
+regression-to-the-mean effect from Lecture 1); and the scale has a ceiling.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+A **two-level (multilevel, hierarchical) generative model**. Level 1:
+$Y_{it} = \beta_{0i} + \beta_{1i} t + \varepsilon_{it}$. Level 2:
+$(\beta_{0i}, \beta_{1i})$ drawn from a bivariate normal with means
+$(\gamma_{00}, \gamma_{10})$, standard deviations $(\tau_0, \tau_1)$ and
+correlation $\rho$. The $\tau$'s describe **between-person** variability;
+$\sigma$ describes **within-person** variability.
+:::
+
+---
+
+# 2. Where do the dials come from?
+
+Section 1 drew every client's dials from a **normal**, bell-shaped population.
+That was a choice, and in a generative story every choice is a claim about how
+the world works. This one is a claim about **how clients come to differ**.
+
+The bell is the right shape when a client's rate of change is the **sum of many
+small, independent influences, none of which dominates**: whether they have a
+supportive partner, a stable job, enough sleep, how well they click with their
+therapist, and so on. Each influence nudges the rate a little up or down, and
+the nudges add up. The **central limit theorem** says that such a sum ends up
+close to a bell, whatever each nudge looks like on its own. It is the same
+argument that makes body height roughly normal.
+
+Each part of that sentence (*many*, *small*, *independent*, *adding up*) is a
+substantive claim, and each can fail. The widget below makes 5000 clients'
+dials from four different stories and compares them with the bell that has the
+same mean and SD, which is the bell a multilevel model would assume.
+
+- **Many small nudges that add up.** Each influence is either present (for 30%
+  of clients) or absent, and a present influence adds a little to the
+  client's rate of change.
+- **Many small nudges that multiply.** A present influence scales the client's
+  responsiveness up by a percentage, so influences amplify each other: a
+  boost helps more in someone who is already improving.
+- **Two kinds of clients.** Responders improve by about 1.5 points a week;
+  non-responders don't change. One big cause instead of many small ones.
+- **A bounded dial.** Some dials can only take values in a range. *Stickiness*,
+  the share of last week's mood that carries over into this week, lies between
+  0 (none) and 1 (all of it). Later lectures model this dial. Here the nudges
+  add up on the log-odds scale, and the result is squeezed into (0, 1).
+
+```{r mech-numbers, echo=FALSE}
+# Four stories of how clients come to differ. Each of K influences is present
+# for a client with probability 0.3 and, if present, has a size between 0.5
+# and 1.5; z is the standardised sum of a client's influences.
+mech_dials <- function(mech, K, p_resp, N = 5000) {
+  nudges <- matrix(rbinom(N * K, 1, 0.3) * runif(N * K, 0.5, 1.5), N, K)
+  z <- (rowSums(nudges) - 0.3 * K) / sqrt(0.235 * K)
+  switch(mech,
+         add   = 1 + 0.5 * z,
+         mult  = exp(-0.47^2 / 2 + 0.47 * z),
+         mix   = ifelse(runif(N) < p_resp, rnorm(N, 1.5, 0.3), rnorm(N, -0.1, 0.3)),
+         bound = plogis(qlogis(0.8) + 1.2 * z))
+}
+bell_vs <- function(x, lo, hi = Inf) {
+  m <- mean(x); s <- sd(x)
+  c(obs = mean(x < lo | x > hi), bell = pnorm(lo, m, s) + pnorm(hi, m, s, lower.tail = FALSE))
+}
+set.seed(2)
+mx_mult  <- mech_dials("mult", 50, 0.5, 2e5)
+mx_mix85 <- mech_dials("mix", 50, 0.85, 2e5)
+mx_bound <- mech_dials("bound", 50, 0.5, 2e5)
+nb_mult_worse <- bell_vs(mx_mult, 0)
+nb_mult_fast  <- bell_vs(-mx_mult, -2)                   # share above 2 per week
+nb_mix_worse  <- bell_vs(mx_mix85, 0)
+nb_bound      <- bell_vs(mx_bound, 0, 1)
+```
+
+```{r fig-mechanisms, echo=FALSE}
+inputPanel(
+  radioButtons("mx_mech", "How do clients come to differ?",
+               choices = c("Many small nudges that add up" = "add",
+                           "Many small nudges that multiply" = "mult",
+                           "Two kinds of clients" = "mix",
+                           "A bounded dial: stickiness" = "bound"),
+               selected = "add", width = "280px"),
+  sliderInput("mx_k", "Number of influences per client:",
+              min = 1, max = 50, value = 3, step = 1, width = "230px"),
+  sliderInput("mx_p", "Share of responders (two kinds only):",
+              min = 0.05, max = 0.95, value = 0.5, step = 0.05, width = "230px"),
+  actionButton("mx_go", "New clients")
+)
+
+renderPlot({
+  input$mx_go
+  mech <- input$mx_mech
+  x <- mech_dials(mech, input$mx_k, input$mx_p)
+  m <- mean(x); s <- sd(x)
+  bound <- mech == "bound"
+  xlab <- if (bound) "stickiness (share of last week's mood carried over)"
+          else "a client's change per week"
+  main <- switch(mech, add = "Nudges that add up", mult = "Nudges that multiply",
+                 mix = "Two kinds of clients", bound = "A bounded dial")
+  sub <- if (bound) {
+    b <- bell_vs(x, 0, 1)
+    sprintf("the bell puts %.1f%% of clients below 0 or above 1",
+            100 * b["bell"])
+  } else {
+    w <- bell_vs(x, 0); f <- bell_vs(-x, -2)
+    sprintf("worse: %.1f%% (bell %.1f%%)   faster than 2/week: %.1f%% (bell %.1f%%)",
+            100 * w["obs"], 100 * w["bell"], 100 * f["obs"], 100 * f["bell"])
+  }
+
+  par(mfrow = c(1, 2)); base_par()
+  xl <- if (bound) c(-0.2, 1.2) else range(c(-1, 3, m + c(-3.5, 3.5) * s))
+  br <- seq(min(x, xl[1]) - 0.01, max(x, xl[2]) + 0.01, length.out = 70)
+  h  <- hist(x, breaks = br, plot = FALSE)
+  xs <- seq(xl[1], xl[2], length.out = 400)
+  plot(NA, xlim = xl, ylim = c(0, max(h$density, dnorm(m, m, s)) * 1.1), axes = FALSE,
+       xlab = xlab, ylab = "")
+  abline(v = pretty(xl, 7), col = COL$grid)
+  if (bound) rect(c(-1, 1), 0, c(0, 2), 1e3, col = alpha(COL$truth, 0.08), border = NA)
+  plot(h, freq = FALSE, add = TRUE, col = alpha(COL$resid, 0.55), border = NA)
+  lines(xs, dnorm(xs, m, s), col = COL$model, lwd = 3)
+  if (!bound) abline(v = 0, col = COL$muted, lwd = 1.5, lty = 2)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  legend(if (bound) "topleft" else "topright", bty = "n", pch = c(15, NA),
+         pt.cex = 2, lwd = c(NA, 3), col = c(alpha(COL$resid, 0.55), COL$model),
+         legend = c("5000 clients", "bell, same mean and SD"), cex = 0.95)
+  title(main, adj = 0, line = 1.8, cex.main = 1.3, col.main = COL$ink)
+  mtext(sub, side = 3, line = 0.4, adj = 0, cex = 0.9, col = COL$muted)
+
+  q <- qqnorm(sample(x, 500), plot.it = FALSE)
+  panel(range(q$x), range(q$y), xlab = "where a bell would put this client (SDs)",
+        ylab = "client's dial", main = "Against the bell",
+        sub = "on the line = bell-shaped")
+  abline(m, s, col = COL$model, lwd = 3)
+  points(q$x, q$y, pch = 19, cex = 0.8, col = alpha(COL$resid, 0.6))
+}, height = 420)
+```
+
+::: {.question}
+**Q6.** Start with *nudges that add up* and move the number of influences from
+1 to 3, 10 and 50. When does the histogram start to look like the bell? Why
+does it get there, even though a single influence (absent for most clients)
+looks nothing like a bell?
+
+**Q7.** Switch to *nudges that multiply* (50 influences). How does the shape
+differ from the bell? Compare the share of clients getting worse, and of very
+fast improvers, with what the bell says. What would therapy have to be like for
+this story to be right?
+
+**Q8.** Switch to *two kinds of clients*, with half responders, then with 85%.
+At 85%, would you still spot the two kinds if the clinic had 30 clients rather
+than 5000? What does the bell say about how many clients get worse, and why
+does that matter for Nora?
+
+**Q9.** Switch to *a bounded dial*. What does the bell claim about some
+clients? How could you keep a bell in the story and still make it coherent?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q6.** With one influence, most clients (the 70% without it) share exactly
+the same rate and the rest form a separate block: two types of client, nothing
+like a bell. With three it is lumpy and skewed to the right: about a third of clients
+have none of the influences and pile up at the lowest rate, while only a few
+have all three. By about 10 to 20
+influences the histogram is hard to tell from the bell, and the dots in the
+right panel lie on the line. That is the central limit theorem: when many
+independent nudges are added, the shape of each single nudge washes out. The
+bell is a good bet whenever you believe the many-small-additive-causes story,
+and "many" need not be very many.
+
+**Q7.** Skewed to the right: nobody gets worse, most clients sit a little
+below the mean, and a long tail of clients improve very fast. The bell says
+about `r f1(100 * nb_mult_worse["bell"])`% of clients get worse; in this story
+`r f1(100 * nb_mult_worse["obs"])`% do. The bell says
+`r f1(100 * nb_mult_fast["bell"])`% improve by more than 2 points a week; in
+this story `r f1(100 * nb_mult_fast["obs"])`% do. The story fits a therapy in
+which ingredients reinforce each other (hope makes engagement pay off more,
+engagement makes new skills pay off more), and in which something can only
+scale improvement up or down, never turn it into deterioration. The result is
+a *lognormal* population: a bell on the log scale.
+
+**Q8.** With half responders there are two humps, and the bell puts most
+clients in the valley between them, where almost nobody is. With 85% there is
+one hump with a long left tail. With 30 clients, and each client's slope
+estimated with noise (Section 3), that would be very hard to tell from a
+slightly lopsided bell. The bell says about `r f1(100 * nb_mix_worse["bell"])`%
+of clients get worse; in this story it is `r f1(100 * nb_mix_worse["obs"])`%.
+A clinic that sets its expectations from the bell would think deterioration is
+rarer than it is. It also asks the wrong question: in this story the clinical
+question is *who is a responder?*, and a single bell has no way to ask it. If
+you know what distinguishes the groups (a diagnosis, a symptom profile), it
+belongs in the model as a predictor; if you don't, a *mixture* model (a growth
+mixture model) tries to find the groups.
+
+**Q9.** The bell puts about `r f1(100 * nb_bound["bell"])`% of clients at
+stickiness above 1 or below 0. Above 1, a mood would carry over more than
+fully and grow week after week without limit: not a person, an explosion. The
+fix is to keep the bell but on a **transformed scale**: put the bell on the
+log-odds of stickiness and squeeze it back into (0, 1), which is exactly what
+the widget did. Choosing that scale is itself a claim: nudges add on the
+log-odds scale, so the same nudge matters less for a client whose stickiness
+is already close to 0 or 1.
+
+</details>
+
+<div class="keybox">
+
+**What the bell claims about people.**
+Deviations above and below the typical client are equally common
+(*symmetry*). Extreme clients are very rare: fewer than 3 in 1000 lie beyond
+3 SDs (*thin tails*). Any value is possible (*no bounds*). And with two dials,
+the relation between them is a straight line with the same scatter
+everywhere, so a single correlation $\rho$ can describe it.
+
+Whenever this lecture later says that Albert is faster than some percentage
+of clients, that percentage is read off the bell.
+
+</div>
+
+**A second, weaker reading.** Sometimes there is no mechanism story. Then the
+bell can be read as a statement about what we *know*, not about what the
+clinic's population looks like: before seeing the data, we have no reason to
+expect any particular client to be faster or slower than any other (the
+clients are *exchangeable*), and we are only willing to commit to a centre and
+a spread. Among all distributions with a given mean and SD, the normal is the
+one that adds the least extra structure. That reading is defensible, but it
+ends as soon as you know something that distinguishes clients, such as their
+diagnosis or that they dropped out. That knowledge belongs in the story.
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+The **central limit theorem**: many small, independent, additive causes give a
+**normal** population. Multiplicative causes give a **lognormal** one (normal
+on the log scale). A few large causes or discrete types give a **mixture**.
+Bounded dials need a bell on a **transformed scale** (log-odds, log). The
+**normal QQ plot** checks the shape of a sample against a bell. Behind any
+population distribution sits a weaker assumption, **exchangeability**: before
+seeing the data, nothing distinguishes one client from another.
+:::
+
+---
+
+# 3. The trouble with comparing clients' slopes
+
+Albert's `r f1(b1_A, 2)` is not his true rate of change. It is an
+*estimate*, and Lecture 1 showed it would wobble if his weeks were rerun.
+Every other client's slope wobbles too, and clients with only a few ratings
+wobble a lot. So if Nora lines up the clinic's *estimated* slopes to see where
+Albert stands, how much of the spread is real?
+
+Below, 1000 clients are drawn from the two-level story. Blue: their **true**
+rates of change. Orange: the rates Nora would **estimate** from each client's
+own ratings.
+
+```{r fig-true-vs-est, echo=FALSE}
+inputPanel(
+  sliderInput("te_t1", "True spread of change per week (tau1):",
+              min = 0, max = 1.5, value = 0.5, step = 0.05, width = "260px"),
+  sliderInput("te_sg", "Size of weekly shocks (sigma):",
+              min = 1, max = 20, value = 8, step = 0.5, width = "260px"),
+  sliderInput("te_n", "Ratings per client:",
+              min = 4, max = 40, value = 21, step = 1, width = "260px"),
+  actionButton("te_go", "New clients")
+)
+
+renderPlot({
+  input$te_go
+  wk <- 0:(input$te_n - 1)
+  w  <- two_level_world(1000, 40, 1, 7, input$te_t1, 0, input$te_sg, weeks = wk)
+  est <- ols_slopes(w$Y, wk)
+  base_par()
+  lim <- range(c(-2, 4, quantile(est, c(0.005, 0.995))))
+  br  <- seq(floor(min(est, w$b1)) - 0.5, ceiling(max(est, w$b1)) + 0.5, by = 0.1)
+  h1 <- hist(w$b1, breaks = br, plot = FALSE); h2 <- hist(est, breaks = br, plot = FALSE)
+  plot(NA, xlim = lim, ylim = c(0, max(h1$density, h2$density) * 1.15), axes = FALSE,
+       xlab = "change per week", ylab = "")
+  abline(v = pretty(lim, 8), col = COL$grid)
+  plot(h1, freq = FALSE, add = TRUE, col = alpha(COL$model, 0.45), border = NA)
+  plot(h2, freq = FALSE, add = TRUE, col = alpha(COL$resid, 0.45), border = NA)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  title(sprintf("%d ratings per client", input$te_n), adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+  title(sprintf("SD of true slopes %.2f (blue)     SD of estimated slopes %.2f (orange)     theory %.2f",
+                sd(w$b1), sd(est), sqrt(input$te_t1^2 + input$te_sg^2 / Sxx_n(input$te_n))),
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 400)
+```
+
+$$\mathrm{SD}(\text{estimated slopes}) \;\approx\; \sqrt{\underbrace{\tau_1^2}_{\text{real differences}} + \underbrace{\sigma^2 / S_{xx}}_{\text{estimation noise}}}$$
+
+::: {.question}
+**Q10.** With 21 ratings, $\sigma = 8$ and $\tau_1 = 0.5$: how much wider is
+the orange histogram than the blue one?
+
+**Q11.** Now give each client only 5 ratings. What happens? Which clients end
+up at the extremes of the orange histogram?
+
+**Q12.** Set $\tau_1 = 0$: all clients truly improve at exactly the same rate.
+What does a league table of estimated slopes show now?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q10.** Only a little: about
+`r f1(sqrt(0.25 + 64 / Sxx_n(21)), 2)` against 0.50. With 21 weekly ratings,
+most of the spread in estimated slopes reflects real differences.
+
+**Q11.** The orange histogram explodes, to an SD of about
+`r f1(sqrt(0.25 + 64 / Sxx_n(5)), 1)`. With five ratings, the estimation
+noise ($\sigma^2 / S_{xx} = 64 / 10$) swamps the real differences
+($\tau_1^2 = 0.25$). The clients at the extremes are no longer the clients who
+truly improve fastest or slowest; they are the ones whose few weeks happened
+to fall luckily or unluckily.
+
+**Q12.** A league table with winners and losers, even though every client
+improves at exactly the same rate. All of the spread is noise. Ranking
+clients by their estimated slopes, and especially calling the top and bottom
+ones "best" and "worst", rewards and punishes luck, most of all for clients
+with little data.
+
+</details>
+
+<div class="keybox">
+
+**Three kinds of variability now.**
+$\tau_0$ and $\tau_1$: how much clients **really** differ (between persons).
+$\sigma$: how much a client's weeks scatter around their own line (within a
+person).
+And, from Lecture 1, the **estimation noise** in each client's slope,
+$\sigma^2 / S_{xx}$, which is large for clients with few ratings.
+
+To say where Albert stands, we need to separate the first from the last.
+That is what the multilevel model does.
+
+</div>
+
+---
+
+<div class="part">Part 2 · Albert's clinic</div>
+
+# 4. Albert among 29 others
+
+Albert's clinic has seen 30 clients in the same therapy, with the same weekly
+questionnaire. `r sum(n_i == 21)` of them, including Albert, completed all 21
+weeks; `r sum(n_i < 21)` stopped after between `r min(n_i)` and
+`r max(n_i[n_i < 21])` ratings. (These clients are fictional, like Albert.)
+
+```{r clinic-peek, echo=TRUE}
+head(clinic)
+table(ratings_per_client = n_i)
+```
+
+```{r fig-clinic, echo=FALSE}
+inputPanel(
+  selectInput("cl_who", "Highlight a client:", choices = label, selected = "Albert",
+              width = "220px"),
+  checkboxInput("cl_lines", "Show each client's own line", FALSE)
+)
+
+renderPlot({
+  who <- match(input$cl_who, label)
+  par(mfrow = c(5, 6)); base_par(mar = c(1.8, 2.2, 1.8, 0.4), mgp = c(1.6, 0.4, 0))
+  for (j in ids) {
+    x <- clinic[clinic$client == j, ]
+    hl <- j == who
+    plot(NA, xlim = c(0, 20), ylim = c(10, 95), axes = FALSE, xlab = "", ylab = "")
+    abline(h = c(25, 50, 75), v = c(0, 10, 20), col = COL$grid)
+    if (hl) rect(-2, 0, 22, 100, col = alpha(COL$resid, 0.08), border = NA)
+    axis(1, at = c(0, 10, 20), col = COL$grid, cex.axis = 0.8)
+    axis(2, at = c(25, 50, 75), col = COL$grid, cex.axis = 0.8)
+    if (isTRUE(input$cl_lines) && nrow(x) > 1)
+      segments(0, np[j, 1], max(x$week), np[j, 1] + np[j, 2] * max(x$week),
+               col = if (hl) COL$resid else COL$model, lwd = 2)
+    points(x$week, x$mood, pch = 19, cex = 0.8, col = if (hl) COL$resid else COL$ink)
+    mtext(sprintf("%s (%d)", label[j], nrow(x)), side = 3, line = 0.2, adj = 0,
+          cex = 0.75, font = if (hl) 2 else 1, col = if (hl) COL$resid else COL$ink)
+  }
+}, height = 640)
+```
+
+::: {.question}
+**Q13.** Look at the clinic (the number in brackets is how many ratings each
+client gave). Which clients seem to be improving fastest? Is anyone getting
+worse? Write down your top three and your bottom one.
+:::
+
+---
+
+# 5. Complete pooling: one line for everyone
+
+The simplest way to use the whole clinic is to ignore who is who: pour all
+`r nrow(clinic)` ratings into one regression, as if they came from one very
+long Albert.
+
+```{r cp, echo=TRUE}
+m_cp <- lm(mood ~ week, data = clinic)
+coef(summary(m_cp))
+```
+
+```{r fig-cp, echo=FALSE}
+renderPlot({
+  par(mfrow = c(1, 2)); base_par()
+  panel(c(-0.6, 20.6), c(10, 95), xat = seq(0, 20, 5),
+        main = "One line for everyone",
+        sub = sprintf("mood = %.1f + %.2f x week", cp[1], cp[2]))
+  points(jitter(clinic$week, 0.6), clinic$mood, pch = 19, cex = 0.7,
+         col = alpha(COL$ink, 0.3))
+  abline(m_cp, col = COL$model, lwd = 4)
+  xa <- clinic$client == ID_A
+  points(clinic$week[xa], clinic$mood[xa], pch = 19, cex = 1.2, col = COL$resid)
+  legend("topleft", bty = "n", pch = 19, col = c(alpha(COL$ink, 0.4), COL$resid),
+         legend = c("all clients", "Albert"), cex = 1)
+
+  e  <- resid(m_cp)
+  o  <- order(tapply(e, clinic$client, mean))
+  boxplot(split(e, clinic$client)[o], horizontal = FALSE, axes = FALSE,
+          col = ifelse(o == ID_A, alpha(COL$resid, 0.6), alpha(COL$model_lt, 0.6)),
+          border = COL$muted, outline = FALSE, xlab = "clients (sorted)", ylab = "miss from the one line")
+  abline(h = 0, col = COL$model, lwd = 2)
+  axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Misses, client by client", adj = 0, line = 1.8, cex.main = 1.3, col.main = COL$ink)
+  title("each box = one client's misses; orange = Albert", adj = 0, line = 0.5,
+        cex.main = 0.98, col.main = COL$muted, font.main = 1)
+}, height = 420)
+```
+
+::: {.question}
+**Q14.** What does this model tell Nora about Albert?
+
+**Q15.** Look at the right panel. If the ratings really were `r nrow(clinic)`
+independent weeks from one story, how should the boxes look? What do they
+look like? And what does that mean for the standard error of
+`r f1(se_cp, 3)`?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q14.** Nothing about Albert in particular. It describes the typical course
+in the clinic, about `r f1(cp[2], 2)` points a week, and treats Albert's 21
+ratings as 21 of `r nrow(clinic)` interchangeable rows. It cannot say whether
+Albert is doing better or worse than others, because it assumes nobody is
+different.
+
+**Q15.** In a single story with independent shocks, every box would straddle
+zero. Instead, some clients' misses sit almost entirely above the line and
+others almost entirely below. A client's weeks share that client's own start
+and slope, so they are **not independent**: knowing one week's miss tells you
+about the next. The model counts `r nrow(clinic)` independent pieces of
+information when there are really far fewer, so its standard error of
+`r f1(se_cp, 3)` is too small. (The multilevel model in Section 7 gives
+`r f1(se_g[2], 3)` for the same quantity.) This is the independence problem
+from Lecture 1, one level up.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+**Complete pooling**: one regression for all clients. It estimates the typical
+course but assumes $\tau_0 = \tau_1 = 0$, and ignores that observations are
+**clustered** within clients, which makes its standard errors too small.
+:::
+
+---
+
+# 6. No pooling: a separate line for everyone
+
+The opposite extreme: fit Lecture 1's model to every client separately. Each
+client gets their own intercept and slope, estimated only from their own
+ratings, as if no other client existed. (In one model:
+`lm(mood ~ factor(client) * week)` gives the same lines.)
+
+```{r np, echo=TRUE}
+np <- t(sapply(split(clinic, clinic$client),
+               function(x) coef(lm(mood ~ week, data = x))))
+round(head(np), 2)       # row 1 is Albert: the same line as in Lecture 1
+```
+
+**The clinic's league table.** Every client's own slope, with its 95%
+confidence interval.
+
+```{r fig-league, echo=FALSE}
+inputPanel(
+  checkboxInput("lg_ci", "Show 95% confidence intervals", TRUE),
+  checkboxInput("lg_n", "Colour by number of ratings", TRUE)
+)
+
+renderPlot({
+  o <- order(np[, 2])
+  lo <- np[, 2] - qt(0.975, pmax(n_i - 2, 1)) * np_se
+  hi <- np[, 2] + qt(0.975, pmax(n_i - 2, 1)) * np_se
+  cl <- if (isTRUE(input$lg_n)) ifelse(n_i < 21, COL$resid, COL$model) else rep(COL$model, 30)
+  par(mfrow = c(1, 2)); base_par(mar = c(4.4, 6.5, 3.2, 1.2))
+  xl <- if (isTRUE(input$lg_ci)) c(-8, 10) else c(-4, 5)
+  plot(NA, xlim = xl, ylim = c(0.5, 30.5), axes = FALSE, xlab = "own slope (change per week)", ylab = "")
+  abline(v = pretty(xl, 8), col = COL$grid); abline(v = 0, col = COL$muted)
+  if (isTRUE(input$lg_ci)) segments(pmax(lo[o], xl[1]), 1:30, pmin(hi[o], xl[2]), 1:30, col = alpha(cl[o], 0.5), lwd = 2)
+  points(np[o, 2], 1:30, pch = 19, cex = 1.3, col = cl[o])
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  axis(2, at = 1:30, labels = label[o], las = 1, cex.axis = 0.75, col = NA,
+       font = 1)
+  title("League table: own slopes", adj = 0, line = 1.8, cex.main = 1.3,
+        col.main = COL$ink)
+  title(if (isTRUE(input$lg_n)) "orange = fewer than 21 ratings" else "",
+        adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+
+  base_par()
+  plot(NA, xlim = c(3, 22), ylim = range(np[, 2]) + c(-0.5, 0.5), axes = FALSE,
+       xlab = "number of ratings", ylab = "own slope")
+  abline(h = pretty(np[, 2], 6), v = c(5, 10, 15, 20), col = COL$grid)
+  abline(h = cp[2], col = COL$model, lwd = 2, lty = 2)
+  points(jitter(n_i, 0.4), np[, 2], pch = 19, cex = 1.5, col = cl)
+  text(n_i[c(ID_A, ID_J, ID_L)], np[c(ID_A, ID_J, ID_L), 2], label[c(ID_A, ID_J, ID_L)],
+       pos = c(2, 4, 4), cex = 1, font = 2)
+  axis(1, col = COL$grid, col.ticks = COL$muted); axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Extremes = little data", adj = 0, line = 1.8, cex.main = 1.3,
+        col.main = COL$ink)
+  title("dashed = the one pooled line", adj = 0, line = 0.5, cex.main = 0.98,
+        col.main = COL$muted, font.main = 1)
+}, height = 560)
+```
+
+::: {.question}
+**Q16.** By this table, Jonas is the clinic's most improved client and Lena
+is getting worse fast. Would you give Jonas an award, or call Lena's family?
+Compare with your picks from Q13.
+
+**Q17.** What do the clients at the very top and bottom of the table have in
+common?
+
+**Q18.** No pooling estimates each client as if the other 29 did not exist.
+What useful information does it throw away?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q16.** Neither, yet. Jonas's `r f1(np[ID_J, 2], 1)` points a week and Lena's
+`r f1(np[ID_L, 2], 1)` each come from only `r n_i[ID_J]` ratings; their
+confidence intervals run from about `r round(np[ID_J, 2] - qt(0.975, n_i[ID_J] - 2) * np_se[ID_J])`
+to `r round(np[ID_J, 2] + qt(0.975, n_i[ID_J] - 2) * np_se[ID_J])` and from
+`r round(np[ID_L, 2] - qt(0.975, n_i[ID_L] - 2) * np_se[ID_L])` to
+`r round(np[ID_L, 2] + qt(0.975, n_i[ID_L] - 2) * np_se[ID_L])` points a week.
+Five weeks with one lucky or unlucky rating at the end is enough to produce
+such slopes. This is Section 3, in real data.
+
+**Q17.** They are almost all clients who dropped out early. The funnel on the
+right shows it: with few ratings, own slopes scatter wildly; with 21 they
+cluster. The extremes of a no-pooling league table are dominated by the
+clients we know least about.
+
+**Q18.** Everything the clinic has learned about clients in general: that
+clients here typically gain around `r f1(cp[2], 1)` points a week, and that
+rates of change far beyond ±3 almost never happen among the clients with
+plenty of data. Faced with a client who has 5 ratings, a sensible clinician
+would combine those 5 ratings with that experience. No pooling doesn't.
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+**No pooling**: a separate regression (fixed intercept and slope) for each
+client, equivalently a **fixed-effects** model with a dummy for every client.
+It lets clients differ, but learns nothing from one client about another, and
+its estimates for clients with little data are very noisy.
+:::
+
+---
+
+# 7. The multilevel model: both levels at once
+
+Complete pooling says clients are all the same. No pooling says they have
+nothing in common. The two-level story from Part 1 says something in between:
+**clients differ, but they come from the same population.** Fitting that
+story is what a multilevel (mixed-effects) model does:
+
+```{r re, echo=TRUE}
+m_re <- lmer(mood ~ week + (week | client), data = clinic)
+summary(m_re)
+```
+
+`(week | client)` means: every client gets their own intercept and their own
+slope for `week`, and those are drawn from a common population. The output
+estimates the dials of the two-level story:
+
+| In the output | Value | Dial | In words |
+|---|---|---|---|
+| Fixed effect `(Intercept)` | `r f1(g_hat[1])` | $\gamma_{00}$ | the typical client's mood at intake |
+| Fixed effect `week` | `r f1(g_hat[2], 2)` (SE `r f1(se_g[2], 3)`) | $\gamma_{10}$ | the typical client's change per week |
+| Random effect SD `(Intercept)` | `r f1(tau0_h)` | $\tau_0$ | how much clients differ in where they start |
+| Random effect SD `week` | `r f1(tau1_h, 2)` | $\tau_1$ | how much clients differ in how fast they change |
+| `Corr` | `r f1(rho_h, 2)` | $\rho$ | clients who start lower tend to improve faster |
+| Residual SD | `r f1(sig_h)` | $\sigma$ | the size of life's weekly shocks |
+
+Now Nora's question has an answer. The clinic's population of rates of
+change is roughly a bell centred on `r f1(g_hat[2], 2)` with SD
+`r f1(tau1_h, 2)`. Albert's own rate, as the multilevel model estimates it, is
+**`r f1(pp[ID_A, 2], 2)`**, faster than about **`r pct(pct_A_pp)`%** of
+clients.
+
+**Is Albert on track?** The band shows where the clinic's clients' expected
+mood usually lies at each week, the way routine outcome monitoring draws
+expected recovery curves.
+
+```{r fig-track, echo=FALSE}
+inputPanel(
+  selectInput("tr_who", "Client:", choices = label, selected = "Albert", width = "200px"),
+  checkboxInput("tr_shock", "Band for single weeks (add the weekly shocks)", FALSE)
+)
+
+renderPlot({
+  j <- match(input$tr_who, label); x <- clinic[clinic$client == j, ]
+  t <- seq(0, 20, 0.1)
+  mu <- g_hat[1] + g_hat[2] * t
+  v  <- tau0_h^2 + t^2 * tau1_h^2 + 2 * t * rho_h * tau0_h * tau1_h +
+        if (isTRUE(input$tr_shock)) sig_h^2 else 0
+  base_par()
+  panel(c(-0.6, 20.6), c(0, 100), xat = seq(0, 20, 5),
+        main = sprintf("%s against the clinic's expected course", label[j]),
+        sub = if (isTRUE(input$tr_shock)) "bands: where 50% and 90% of single weekly ratings fall"
+              else "bands: where 50% and 90% of clients' expected mood lies")
+  polygon(c(t, rev(t)), c(mu - 1.645 * sqrt(v), rev(mu + 1.645 * sqrt(v))),
+          col = alpha(COL$model_lt, 0.35), border = NA)
+  polygon(c(t, rev(t)), c(mu - 0.674 * sqrt(v), rev(mu + 0.674 * sqrt(v))),
+          col = alpha(COL$model_lt, 0.55), border = NA)
+  lines(t, mu, col = COL$model, lwd = 3)
+  segments(0, pp[j, 1], 20, pp[j, 1] + 20 * pp[j, 2], col = COL$resid, lwd = 3)
+  points(x$week, x$mood, pch = 19, cex = 1.5, col = COL$ink)
+  legend("bottomright", bty = "n", lwd = c(3, 3, NA), pch = c(NA, NA, 19),
+         col = c(COL$model, COL$resid, COL$ink), cex = 1,
+         legend = c("typical client", sprintf("%s (multilevel estimate)", label[j]),
+                    "ratings"))
+}, height = 420)
+```
+
+::: {.question}
+**Q19.** Is Albert on track? From about when does he move above the typical
+client's course?
+
+**Q20.** Tick "band for single weeks". Why is the band so much wider, and
+which band should Nora use to decide whether *one* bad week is alarming?
+
+**Q21.** The typical change per week has SE `r f1(se_g[2], 3)` here, against
+`r f1(se_cp, 3)` under complete pooling. Why is the multilevel SE larger, and
+which one is right?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q19.** Albert starts a little below the typical client (his estimated
+intake level is `r f1(pp[ID_A, 1])` against `r f1(g_hat[1])`) but climbs
+faster, crosses the typical course within the first couple of weeks, and by week 20
+is in the upper part of the band, near its 90% edge. On this questionnaire, in this clinic, therapy is going
+well for Albert.
+
+**Q20.** The narrow band is about clients' *expected* mood, their lines; the
+wide one adds the weekly shocks, so it describes single ratings. It is the
+same distinction as confidence versus prediction bands in Lecture 1. To judge
+one bad week, Nora needs the wide band; to judge a client's overall course,
+the narrow one.
+
+**Q21.** The multilevel model knows the ratings come from 30 clients who
+genuinely differ. The typical rate is learned from 30 clients' rates, not from
+`r nrow(clinic)` independent weeks, so there is more uncertainty about it. The
+multilevel SE is the honest one; complete pooling's is too small (Q15).
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tool you just used</strong>
+
+The **linear mixed-effects (multilevel) model** with **random intercepts and
+random slopes**, `lmer(y ~ time + (time | person))`: **fixed effects**
+$\gamma_{00}, \gamma_{10}$ describe the typical person; **variance
+components** $\tau_0, \tau_1, \rho$ describe how persons differ; $\sigma$ is
+the within-person residual SD.
+:::
+
+---
+
+# 8. Partial pooling: why Jonas moves and Albert hardly does
+
+The multilevel model's line for each client is not their no-pooling line.
+Each client's estimate is **pulled towards the typical client**, some a lot,
+some hardly at all.
+
+```{r fig-shrink, echo=FALSE}
+inputPanel(
+  radioButtons("sh_view", "Show:", inline = TRUE,
+               choices = c("slopes side by side" = "side",
+                           "start and slope together" = "plane"), selected = "side")
+)
+
+renderPlot({
+  cl <- ifelse(n_i < 21, COL$resid, COL$model)
+  key <- c(ID_A, ID_J, ID_L)
+  base_par()
+  if (input$sh_view == "side") {
+    plot(NA, xlim = c(0.6, 2.9), ylim = range(np[, 2]) + c(-0.3, 0.3), axes = FALSE,
+         xlab = "", ylab = "change per week")
+    abline(h = pretty(np[, 2], 8), col = COL$grid)
+    abline(h = g_hat[2], col = COL$muted, lty = 2, lwd = 2)
+    segments(1, np[, 2], 2, pp[, 2], col = alpha(cl, 0.6), lwd = ifelse(ids %in% key, 3, 1.5))
+    points(rep(1, 30), np[, 2], pch = 21, bg = "white", col = cl, cex = 1.6, lwd = 2)
+    points(rep(2, 30), pp[, 2], pch = 19, col = cl, cex = 1.6)
+    text(2.05, pp[key, 2], sprintf("%s (%d ratings)", label[key], n_i[key]), pos = 4,
+         font = 2, cex = 1.05)
+    axis(2, col = COL$grid, col.ticks = COL$muted)
+    axis(1, at = 1:2, labels = c("no pooling\n(own data only)", "partial pooling\n(multilevel)"),
+         col = NA, cex.axis = 1.1, padj = 0.5)
+    title("Every client pulled towards the typical client", adj = 0, line = 1.8,
+          cex.main = 1.3, col.main = COL$ink)
+    title("dashed = typical change per week;  orange = dropped out early",
+          adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+  } else {
+    xl <- range(np[, 1], pp[, 1]) + c(-3, 3); yl <- range(np[, 2], pp[, 2]) + c(-0.3, 0.3)
+    plot(NA, xlim = xl, ylim = yl, axes = FALSE, xlab = "starting level (intercept)",
+         ylab = "change per week (slope)")
+    abline(h = pretty(yl, 8), v = pretty(xl, 8), col = COL$grid)
+    V <- matrix(c(tau0_h^2, rho_h * tau0_h * tau1_h, rho_h * tau0_h * tau1_h, tau1_h^2), 2)
+    th <- seq(0, 2 * pi, length.out = 200); ev <- eigen(V)
+    for (r in c(1, 2)) {
+      E <- t(g_hat + r * ev$vectors %*% diag(sqrt(ev$values)) %*% rbind(cos(th), sin(th)))
+      lines(E, col = COL$muted, lty = r, lwd = 1.5)
+    }
+    arrows(np[, 1], np[, 2], pp[, 1], pp[, 2], length = 0.08, col = alpha(cl, 0.7),
+           lwd = ifelse(ids %in% key, 3, 1.5))
+    points(np[, 1], np[, 2], pch = 21, bg = "white", col = cl, cex = 1.4, lwd = 2)
+    points(pp[, 1], pp[, 2], pch = 19, col = cl, cex = 1.4)
+    points(g_hat[1], g_hat[2], pch = 4, cex = 2.5, lwd = 4, col = COL$ink)
+    text(pp[key, 1], pp[key, 2], label[key], pos = 4, font = 2, cex = 1.05)
+    axis(1, col = COL$grid, col.ticks = COL$muted); axis(2, col = COL$grid, col.ticks = COL$muted)
+    title("From own estimate (open) to multilevel estimate (filled)", adj = 0, line = 1.8,
+          cex.main = 1.3, col.main = COL$ink)
+    title("cross = typical client; ellipses = where 1 and 2 SDs of clients lie",
+          adj = 0, line = 0.5, cex.main = 0.98, col.main = COL$muted, font.main = 1)
+  }
+}, height = 520)
+```
+
+Why do some estimates move more than others? For the slope, the multilevel
+estimate is approximately a **weighted average** of the client's own estimate
+and the typical client's:
+
+$$\hat\beta_{1i}^{\text{pooled}} \;\approx\; w_i\, \hat\beta_{1i}^{\text{own}} + (1 - w_i)\, \hat\gamma_{10},
+\qquad w_i = \frac{\tau_1^2}{\tau_1^2 + \sigma^2 / S_{xx,i}}$$
+
+The weight compares **how much clients really differ** ($\tau_1^2$) with
+**how noisy this client's own estimate is** ($\sigma^2 / S_{xx,i}$). Lots of
+data: the own estimate is precise, $w_i$ is close to 1, and the client keeps
+their own slope. Little data: $w_i$ is close to 0, and the client is pulled
+towards the typical client. (The real computation also uses the intercept and
+its correlation with the slope, so the formula is approximate.)
+
+```{r fig-weight, echo=FALSE}
+inputPanel(
+  sliderInput("wt_n", "Ratings for this client:", min = 3, max = 40, value = 5,
+              step = 1, width = "240px"),
+  sliderInput("wt_t1", "How much clients differ (tau1):", min = 0.05, max = 2,
+              value = round(tau1_h, 2), step = 0.05, width = "240px"),
+  sliderInput("wt_own", "This client's own slope:", min = -4, max = 5,
+              value = round(np[ID_J, 2], 1), step = 0.1, width = "240px")
+)
+
+renderPlot({
+  ns <- 3:40
+  ws <- w_n(ns, input$wt_t1, sig_h)
+  w  <- w_n(input$wt_n, input$wt_t1, sig_h)
+  est <- w * input$wt_own + (1 - w) * g_hat[2]
+  par(mfrow = c(1, 2)); base_par()
+  plot(NA, xlim = c(3, 40), ylim = c(0, 1), axes = FALSE, xlab = "number of weekly ratings",
+       ylab = "weight on the client's own slope")
+  abline(h = seq(0, 1, 0.25), v = seq(5, 40, 5), col = COL$grid)
+  abline(h = 0.5, col = COL$muted, lty = 2)
+  lines(ns, ws, col = COL$model, lwd = 4)
+  points(input$wt_n, w, pch = 19, cex = 2.2, col = COL$resid)
+  axis(1, col = COL$grid, col.ticks = COL$muted); axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("Weight on own data", adj = 0, line = 1.8, cex.main = 1.3,
+        col.main = COL$ink)
+  title(sprintf("with %d ratings: weight %.2f", input$wt_n, w), adj = 0, line = 0.5,
+        cex.main = 0.98, col.main = COL$muted, font.main = 1)
+
+  xl <- c(-5, 6); plot(NA, xlim = xl, ylim = c(0, 3), axes = FALSE,
+                              xlab = "change per week", ylab = "")
+  abline(v = pretty(xl, 9), col = COL$grid)
+  arrows(input$wt_own, 2, est, 1, length = 0.15, lwd = 3, col = COL$resid)
+  points(input$wt_own, 2, pch = 21, bg = "white", col = COL$resid, cex = 3, lwd = 3)
+  points(est, 1, pch = 19, col = COL$resid, cex = 3)
+  abline(v = g_hat[2], col = COL$model, lwd = 3, lty = 2)
+  text(input$wt_own, 2.35, "own estimate", cex = 1.1)
+  text(est, 0.6, sprintf("pooled: %.2f", est), cex = 1.1, font = 2)
+  text(g_hat[2], 2.85, "typical client", col = COL$model, cex = 1.1)
+  axis(1, col = COL$grid, col.ticks = COL$muted)
+  title("Pulled towards typical", adj = 0, line = 1.8,
+        cex.main = 1.3, col.main = COL$ink)
+}, height = 400)
+```
+
+::: {.question}
+**Q22.** In this clinic, how many weekly ratings does a client need before
+their own data get more than half the weight?
+
+**Q23.** Albert has 21 ratings, Jonas 5. Read off each one's weight. Why does
+Jonas's estimate move from `r f1(np[ID_J, 2], 1)` to `r f1(pp[ID_J, 2], 2)`,
+while Albert's only moves from `r f1(np[ID_A, 2], 2)` to
+`r f1(pp[ID_A, 2], 2)`?
+
+**Q24.** Set "how much clients differ" to its smallest value, then to its
+largest. What happens to everyone's weight, and why does that make sense?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q22.** About **`r n_half`** weekly ratings. Below that, the clinic's
+experience counts for more than the client's own data; above it, the client's
+own data dominate.
+
+**Q23.** Albert's own slope is precise (21 ratings, weight about
+`r f1(w_n(21), 2)`), so the model mostly believes it and pulls it only
+slightly towards `r f1(g_hat[2], 2)`. Jonas's own slope is extremely noisy
+(5 ratings, weight about `r f1(w_n(5), 2)`), so the model mostly relies on
+what clients in this clinic usually do. It's what an experienced clinician
+does informally: "five good weeks is encouraging, but I've seen that before."
+(The model's value, `r f1(pp[ID_J, 2], 2)`, is a bit above the formula's
+`r f1(g_hat[2] + w_n(5) * (np[ID_J, 2] - g_hat[2]), 2)` because the model also
+uses Jonas's low starting level: in this clinic, clients who start low tend to
+improve faster, $\rho < 0$.)
+
+**Q24.** If clients hardly differ ($\tau_1$ small), there is little to learn
+from any single client, so everyone is pulled almost all the way to the
+typical client: close to complete pooling. If clients differ enormously
+($\tau_1$ large), knowing the typical client tells you little about any one
+client, so everyone keeps their own estimate: close to no pooling. Partial
+pooling is not a fixed compromise; the data decide, through $\tau_1$, how
+much to pool.
+
+</details>
+
+### Is shrinking fair? A check against the truth
+
+Pulling Jonas down and Lena up can look like cheating: the model overrides
+what their own ratings say. Is it better? Usually we can't check. Here we
+can: **Albert's 29 fellow clients were simulated**, so for them (not for
+Albert) we know their true rates of change.
+
+```{r fig-truth, echo=FALSE}
+renderPlot({
+  cl <- ifelse(n_i[-1] < 21, COL$resid, COL$model)
+  par(mfrow = c(1, 2)); base_par()
+  lim <- range(c(np[-1, 2], pp[-1, 2], TRUE_B1_OTHERS)) + c(-0.3, 0.3)
+  for (k in 1:2) {
+    est <- if (k == 1) np[-1, 2] else pp[-1, 2]
+    rm  <- sqrt(mean((est - TRUE_B1_OTHERS)^2))
+    plot(NA, xlim = range(TRUE_B1_OTHERS) + c(-0.3, 0.3), ylim = lim, axes = FALSE,
+         xlab = "true change per week", ylab = "estimated change per week")
+    abline(h = pretty(lim, 6), v = pretty(TRUE_B1_OTHERS, 6), col = COL$grid)
+    abline(0, 1, col = COL$muted, lwd = 2)
+    segments(TRUE_B1_OTHERS, TRUE_B1_OTHERS, TRUE_B1_OTHERS, est, col = alpha(cl, 0.5), lwd = 2)
+    points(TRUE_B1_OTHERS, est, pch = if (k == 1) 21 else 19, bg = "white", col = cl,
+           cex = 1.6, lwd = 2)
+    kk <- c(ID_J, ID_L) - 1
+    text(TRUE_B1_OTHERS[kk], est[kk], label[kk + 1], pos = 4, font = 2)
+    axis(1, col = COL$grid, col.ticks = COL$muted); axis(2, col = COL$grid, col.ticks = COL$muted)
+    title(if (k == 1) "No pooling" else "Partial pooling", adj = 0, line = 1.8,
+          cex.main = 1.3, col.main = COL$ink)
+    title(sprintf("typical error (RMSE) = %.2f points per week", rm), adj = 0, line = 0.5,
+          cex.main = 0.98, col.main = COL$muted, font.main = 1)
+  }
+}, height = 420)
+```
+
+Jonas's true rate of change is **`r f1(TRUE_B1_OTHERS[ID_J - 1], 2)`**
+(no pooling said `r f1(np[ID_J, 2], 2)`, partial pooling
+`r f1(pp[ID_J, 2], 2)`). Lena's is **`r f1(TRUE_B1_OTHERS[ID_L - 1], 2)`**:
+she was improving all along (no pooling said `r f1(np[ID_L, 2], 2)`, partial
+pooling `r f1(pp[ID_L, 2], 2)`). Across the 29 clients, partial pooling's
+typical error is `r f1(rmse_pp, 2)` points a week against no pooling's
+`r f1(rmse_np, 2)`.
+
+**Is that luck?** Open new simulated clinics and compare.
+
+```{r fig-sim-rmse, echo=FALSE}
+inputPanel(
+  sliderInput("rm_t1", "How much clients differ (tau1):", min = 0.1, max = 1.5,
+              value = 0.5, step = 0.05, width = "240px"),
+  sliderInput("rm_drop", "Clients who drop out early:", min = 0, max = 25,
+              value = 9, step = 1, width = "240px"),
+  actionButton("rm_go", "Open a new clinic")
+)
+
+renderPlot({
+  input$rm_go
+  J <- 30
+  w <- two_level_world(J, 40, 1, 7, input$rm_t1, -0.3, 8)
+  nn <- rep(21, J); if (input$rm_drop > 0) nn[seq_len(input$rm_drop)] <- sample(4:10, input$rm_drop, TRUE)
+  d <- do.call(rbind, lapply(1:J, function(j)
+    data.frame(client = j, week = 0:(nn[j] - 1), mood = w$Y[1:nn[j], j])))
+  own <- sapply(split(d, d$client), function(x) coef(lm(mood ~ week, x))[2])
+  m <- suppressWarnings(suppressMessages(lmer(mood ~ week + (week | client), data = d)))
+  pool <- coef(m)$client[, 2]
+  r1 <- sqrt(mean((own - w$b1)^2)); r2 <- sqrt(mean((pool - w$b1)^2))
+  base_par()
+  lim <- range(c(own, pool, w$b1))
+  plot(NA, xlim = range(w$b1) + c(-0.2, 0.2), ylim = lim, axes = FALSE,
+       xlab = "true change per week", ylab = "estimate")
+  abline(h = pretty(lim, 6), v = pretty(w$b1, 6), col = COL$grid)
+  abline(0, 1, col = COL$muted, lwd = 2)
+  points(w$b1, own, pch = 21, bg = "white", col = COL$resid, cex = 1.5, lwd = 2)
+  points(w$b1, pool, pch = 19, col = COL$model, cex = 1.5)
+  legend("topleft", bty = "n", pch = c(21, 19), col = c(COL$resid, COL$model), pt.lwd = 2,
+         legend = c(sprintf("no pooling: RMSE %.2f", r1), sprintf("partial pooling: RMSE %.2f", r2)),
+         cex = 1.1)
+  axis(1, col = COL$grid, col.ticks = COL$muted); axis(2, col = COL$grid, col.ticks = COL$muted)
+  title("A new simulated clinic", adj = 0, line = 1.8, cex.main = 1.3, col.main = COL$ink)
+}, height = 420)
+```
+
+::: {.question}
+**Q25.** Open several new clinics. Does partial pooling win every time? When
+is its advantage largest, and when does it nearly vanish?
+
+**Q26.** Partial pooling is *biased* for individual clients: it pulls genuine
+outliers towards the middle. When could that be clinically dangerous?
+:::
+
+<details>
+<summary>Show the answers</summary>
+
+**Q25.** Almost always, and by most when many clients have few ratings and
+clients differ little (small $\tau_1$), because then own estimates are mostly
+noise. With few dropouts and large $\tau_1$ the two methods nearly agree:
+there is little to pool. The price of partial pooling is a little bias for
+each client; the gain is a large reduction in noise. On average, that trade
+wins.
+
+**Q26.** A client who really is deteriorating fast, but has given only a few
+ratings, will be pulled towards "improving like everyone else". If a clinic
+uses shrunken estimates to decide who needs extra attention, genuine early
+warning signs can be softened. Early-warning systems therefore often look at
+individual ratings too, not only at pooled trajectories. A second danger: if
+clients drop out *because* therapy isn't working for them, the population
+itself is estimated from a biased sample, and everyone is pulled towards a
+too-optimistic "typical client".
+
+</details>
+
+::: {.tool}
+<strong class="tag">The tools you just used</strong>
+
+**Partial pooling** (also called **shrinkage** or **borrowing strength**):
+each person's estimate combines their own data with the population estimate,
+weighted by their precision. The resulting person-specific estimates are the
+model's **conditional modes** (often called **BLUPs**), `coef(m)` or
+`ranef(m)` in `lme4`. They are biased towards the mean, but more accurate on
+average than no-pooling estimates.
+:::
+
+---
+
+# 9. What Lecture 2 lets us say about Albert
+
+::: {.question}
+**Q27.** Write two or three sentences for Nora: is therapy going well for
+Albert, compared with other clients in the clinic? Include one caveat.
+:::
+
+<details>
+<summary>Show one version</summary>
+
+<div class="report">
+
+In this clinic, clients' mood typically rises by about `r f1(g_hat[2], 2)`
+points a week (95% CI roughly `r f1(g_hat[2] - 1.96 * se_g[2], 1)` to
+`r f1(g_hat[2] + 1.96 * se_g[2], 1)`), and clients differ in their rate of
+change with an SD of about `r f1(tau1_h, 2)`. Albert's estimated rate,
+borrowing strength from the whole clinic, is about `r f1(pp[ID_A, 2], 1)`
+points a week, faster than roughly `r pct(pct_A_pp)`% of clients. He started a
+little below the typical client and is now well above the expected course.
+
+*Caveat:* the comparison assumes the clinic's clients, including those who
+dropped out, are a fair picture of clients like Albert; the percentage is
+read off a bell-shaped population of change rates (Section 2); and it still
+assumes that each client's weeks follow a straight line with memoryless
+shocks.
+
+</div>
+
+</details>
+
+<div class="keybox">
+
+**The model of Lecture 2**
+
+$$\text{Mood}_{it} = \beta_{0i} + \beta_{1i}\,t + \varepsilon_{it}, \qquad
+\varepsilon_{it} \sim \mathcal{N}(0, \sigma)$$
+
+$$\begin{pmatrix}\beta_{0i}\\ \beta_{1i}\end{pmatrix} \sim
+\mathcal{N}\!\left(\begin{pmatrix}\gamma_{00}\\ \gamma_{10}\end{pmatrix},
+\begin{pmatrix}\tau_0^2 & \rho\tau_0\tau_1\\ \rho\tau_0\tau_1 & \tau_1^2\end{pmatrix}\right)$$
+
+| Model | What it assumes about clients | In R |
+|---|---|---|
+| Complete pooling | all the same ($\tau_0 = \tau_1 = 0$) | `lm()` on all ratings |
+| No pooling | unrelated to each other ($\tau \to \infty$) | `lm()` per client |
+| Partial pooling | different, but from one population ($\tau$ estimated) | `lmer()` with random intercepts and slopes |
+
+In code: `lm(mood ~ week)`, `lm(mood ~ factor(client) * week)` and
+`lmer(mood ~ week + (week | client))`.
+
+Lecture 1 asked how Albert changes. Lecture 2 adds: **how does Albert's
+change compare with others', and what can others tell us about Albert?** It
+adds one assumption, that clients' dials come from a single bell-shaped
+population, which is a claim about how clients come to differ. Both
+lectures still assume each client changes along a straight line with
+memoryless weekly shocks. Later lectures keep the two-level idea and change
+the within-person story, so we can ask, for instance, whether Albert's mood is
+more "sticky" from week to week than other clients'.
+
+</div>
+
+---
+
+# 10. Exercises
+
+**E1. Do clients really differ in how fast they change?**
+Fit a model in which clients differ only in where they start:
+`m1 <- lmer(mood ~ week + (1 | client), data = clinic)`. What does this model
+claim about therapy? Compare it with `m_re` using `anova(m1, m_re)`. What do
+you conclude?
+
+**E2. Where you put zero, again.**
+Refit with week centred at mid-therapy:
+`lmer(mood ~ I(week - 10) + (I(week - 10) | client), data = clinic)`. What
+happens to $\tau_0$ and to the correlation $\rho$? Relate this to Section 11
+of Lecture 1.
+
+**E3. How much of mood is "who you are"?**
+Fit `m0 <- lmer(mood ~ 1 + (1 | client), data = clinic)` and compute the
+**intraclass correlation**, $\tau_0^2 / (\tau_0^2 + \sigma^2)$. In words, what
+share of the variation in weekly ratings lies between clients rather than
+within them?
+
+**E4. When dropping out is not random.**
+Adapt the simulation in Section 8 so that clients whose true slope is below
+0.5 are more likely to drop out early. Fit the multilevel model to many such
+clinics. What happens to the estimated typical change per week, and why does
+it matter for Albert's comparison?
+
+**E5. A new client.**
+A new client, Sam, has given three ratings: 38, 45 and 41. Estimate Sam's
+rate of change with no pooling, then add Sam to `clinic` and refit `m_re`.
+Compare Sam's multilevel slope with his own slope, and explain the difference
+using the weight formula.
+
+**E6. Can the model see the two kinds of clients?**
+Simulate a clinic of 30 clients with 21 weekly ratings each, where 85% are
+responders (true slope drawn from $\mathcal{N}(1.5, 0.3)$) and 15% are
+non-responders ($\mathcal{N}(-0.1, 0.3)$); use the intercepts and $\sigma$
+of Section 1. Fit `lmer(mood ~ week + (week | client))`. Compare
+$\hat\gamma_{10}$ and $\hat\tau_1$ with the mean and SD of the true slopes.
+Then compare a histogram of the model's client slopes (`coef(m)$client$week`)
+with one of the true slopes. Repeat for a few clinics, then with only 6
+ratings per client. Why is looking at the model's own client estimates a weak
+check of the bell?
+
+<details>
+<summary>Hints</summary>
+
+**E1.** The random-intercepts model says all clients improve at the same rate.
+The likelihood-ratio test compares the two models; with 30 clients the random
+slopes should clearly improve the fit. Look at the $\tau_1$ estimate as well
+as the p-value.
+
+**E3.** In this clinic the ICC is about
+`r f1({v0 <- as.data.frame(VarCorr(lmer(mood ~ 1 + (1 | client), data = clinic)))$vcov; v0[1] / sum(v0)}, 2)`.
+
+**E5.** Sam's own slope comes from three ratings, so its weight is tiny (about
+`r f1(w_n(3), 2)`); his multilevel slope will be close to the typical
+client's.
+
+**E6.** The typical change and its SD are usually close to the mean and SD of
+the true slopes: those estimates hold up well when the bell is wrong. With
+21 ratings, the model's client slopes often still show the two kinds, but
+blurred. With 6 ratings the gap largely disappears: estimation noise fills it
+in, and every client is pulled strongly towards the single centre the bell
+assumes, so the estimates take on the bell's shape. To see the two kinds, the
+story has to allow for them, for example with a mixture model.
+
+</details>
+
+---
+
+<p style="color:#898781; font-size:0.9em; margin-top:3em;">
+Albert, Nora and the clinic's clients are fictional. The clinic's other
+clients were simulated from the two-level story of Section 1.
+Rendered with R, Shiny and lme4.
+</p>
