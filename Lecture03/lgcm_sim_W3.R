@@ -15,8 +15,14 @@ times <- seq(from=0, to=20, by=1) # create a sequence of time points to store
 Nobs <- length(times) # specify number of observations
 
 initialAffect <- rnorm(n = Nsubject, mean = 5, sd =2) # sample intercept for each subject
-timeCoefficients <- rnorm(n = Nsubject, mean = 0.51, sd = .2) + # sample slope slope for each subject
-  scale(initialAffect)* -0.3 # correlate slope with intercept
+
+# set the desired intercept-slope correlation and derive the weight (b) that produces it
+rho <- -0.8 # desired correlation between intercept and slope
+sdSlope <- .2 # SD of the part of the slope that is unrelated to the intercept
+b <- rho * sdSlope / sqrt(1 - rho^2) # weight on the standardized intercept that gives rho
+
+timeCoefficients <- rnorm(n = Nsubject, mean = 0.51, sd = sdSlope) + # sample slope slope for each subject
+  scale(initialAffect)* b # correlate slope with intercept
 
 cor(initialAffect, timeCoefficients) # check correlation between slope and intercept
 
