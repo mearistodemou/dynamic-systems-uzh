@@ -1,0 +1,385 @@
+---
+title: "Lecture 5 exercises: from one equilibrium to therapy with a personal baseline"
+subtitle: "Dynamic Systems Thinking in Psychology"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+---
+
+```{r setup, include = FALSE}
+SOLN <- FALSE # code chunks with gaps (___) are not run when knitting; run them yourself once filled in
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 4.5, out.width = "100%")
+library(ggplot2)
+```
+
+## What you will do
+
+In the lecture we wrote affect as a continuous-time process and simulated it with many small steps. In these exercises you use that simulation to build a simple model of therapy, in three stages:
+
+1. **The basic model**, $\frac{dy}{dt} = A\,y + B$. You will see why $B$ cannot simply be read as "the effect of therapy" when clients differ in their usual level.
+2. **Baseline and therapy on.** Each person gets their own baseline, and therapy becomes a push added on top of it.
+3. **Therapy off again.** Therapy ends, and you look at what happens to the gains.
+
+Work through the exercises in order. When an exercise says **Predict first**, write down your prediction *before* running the code. The point is to compare what you expected with what the model does.
+
+Throughout, time is in weeks and affect is on an arbitrary scale.
+
+---
+
+## Part 1: The basic model
+
+The rule for change is
+
+$$\frac{dy}{dt} = A\,y + B$$
+
+where $A$ (per week) says how strongly affect is pulled back towards its equilibrium, and $B$ (affect units per week) is a constant push. The code below is the simulation from the lecture: between two observations it takes `Nsteps` small steps, and in each step it computes the slope from the *current* state and moves forward by slope $\times$ `dt`.
+
+```{r part1-code}
+times <- seq(from = 0, to = 20, by = 1) #time points when affect is measured (weeks)
+A <- -0.2 #continuous time state dependence
+B <- 2 #continuous intercept
+initialAffect <- 3 #affect at the first time point
+manySteps <- 100 #number of small steps between observations
+
+simulateAffect <- function(Nsteps, initialAffect){ #simulate affect, given the number of small steps
+  Nobs <- length(times) #number of observations
+  Affect <- rep(NA, Nobs) #create empty affect vector
+  for(i in 1:Nobs){ #for each time point
+    if(i == 1) Affect[i] <- initialAffect #if first time point, set to initial affect
+    else{ #compute new affect state by taking a sequence of small steps in time
+      AffectState <- Affect[i-1] #initialise with state at previous time point
+      dt <- (times[i] - times[i-1]) / Nsteps #size of each small time step
+      for(stepi in 1:Nsteps){ #take Nsteps in time between each observation
+        dAffect <- A*AffectState + B #compute slope of affect at the current state
+        AffectState <- AffectState + dAffect * dt #update state using slope and time step
+      }
+      Affect[i] <- AffectState #store state reached at this time point
+    }
+  }
+  Affect #return the simulated affect vector
+}
+
+plotData <- data.frame(Time = times, Affect = simulateAffect(manySteps, initialAffect = 3))
+
+ggplot(plotData, aes(x = Time, y = Affect)) +
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect")
+```
+
+### Exercise 1.1: Where does affect go?
+
+a. Which value does affect approach in the plot?
+
+b. The **equilibrium** is the value where affect stops changing, so $\frac{dy}{dt} = 0$. Set $A\,y + B = 0$ and solve for $y$. Compute the value for $A = -0.2$ and $B = 2$ by hand, then check it in R with `-B/A`.
+
+c. Compute the slope $A\,y + B$ at $y = 3$ and at $y = 9$. Why does the curve flatten as it rises?
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 1.2: A person who starts higher
+
+Suppose $B$ is meant to be the effect of therapy. A second client, whose usual level of affect is 20, starts therapy at affect 20 instead of 3. $A$ and $B$ stay the same.
+
+a. **Predict first:** sketch what you expect affect to do over the 20 weeks.
+
+b. Run the simulation with `initialAffect = 20` and plot both clients in one figure.
+
+c. Therapy now seems to make this client *worse*. Use your answer to Exercise 1.1 to explain why. What does the model assume about the level each client would settle at?
+
+```{r ex-1-2, eval = SOLN}
+plotData <- rbind(
+  data.frame(Time = times, Affect = simulateAffect(manySteps, initialAffect = 3), Client = "starts at 3"),
+  data.frame(Time = times, Affect = simulateAffect(manySteps, initialAffect = ___), Client = "starts at 20")
+)
+
+ggplot(plotData, aes(x = Time, y = Affect, colour = Client)) +
+  geom_hline(yintercept = -B/A, linetype = "dashed") + #the equilibrium
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect", colour = "Client")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 1.3: Changing A
+
+Set $A = -0.5$ and keep $B = 2$ and `initialAffect = 3`.
+
+a. **Predict first:** will affect rise faster or slower? To which value?
+
+b. Run it and check. Which *two* things changed when you changed only $A$?
+
+```{r ex-1-3, eval = SOLN}
+A <- ___
+plotData <- data.frame(Time = times, Affect = simulateAffect(manySteps, initialAffect = 3))
+ggplot(plotData, aes(x = Time, y = Affect)) +
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect")
+-B/A
+A <- -0.2 # set A back for the next part
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+---
+
+## Part 2: Each person gets a baseline, and therapy is a push
+
+We rewrite the rule as
+
+$$\frac{dy}{dt} = A\,(y - \mu) + T$$
+
+- $\mu$ is the person's **baseline**: the level they would stay at without therapy.
+- $A\,(y - \mu)$ pulls affect back towards *their own* baseline.
+- $T$ is the **therapy push** (affect units per week).
+
+### Exercise 2.1: Simulate two people
+
+Fill in the slope line in the code below so that it follows $\frac{dy}{dt} = A\,(y - \mu) + T$. Each person now starts at their own baseline.
+
+a. **Predict first:** what is the equilibrium during therapy? Set $\frac{dy}{dt} = 0$ and solve for $y$.
+
+b. Run the code for baselines 3 and 20. How much does each person improve by week 20?
+
+```{r ex-2-1, eval = SOLN}
+A <- -0.2 #continuous time state dependence
+therapy <- 2 #push from therapy (affect units per week)
+
+simulateAffect <- function(Nsteps, baseline){ #simulate affect for a person with a given baseline
+  Nobs <- length(times) #number of observations
+  Affect <- rep(NA, Nobs) #create empty affect vector
+  for(i in 1:Nobs){ #for each time point
+    if(i == 1) Affect[i] <- baseline #first time point: the person starts at their own baseline
+    else{
+      AffectState <- Affect[i-1] #initialise with state at previous time point
+      dt <- (times[i] - times[i-1]) / Nsteps #size of each small time step
+      for(stepi in 1:Nsteps){
+        dAffect <- ___ #fill in: pull towards own baseline + therapy push
+        AffectState <- AffectState + dAffect * dt #update state using slope and time step
+      }
+      Affect[i] <- AffectState #store state reached at this time point
+    }
+  }
+  Affect
+}
+
+plotData <- rbind(
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 3), Person = "baseline 3"),
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 20), Person = "baseline 20")
+)
+
+ggplot(plotData, aes(x = Time, y = Affect, colour = Person)) +
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect", colour = "Person")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 2.2: No therapy
+
+Set `therapy <- 0` and run the simulation again.
+
+a. **Predict first:** what will affect do?
+
+b. Why is this a sensible check of the model?
+
+```{r ex-2-2, eval = SOLN}
+therapy <- ___
+plotData <- data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 20))
+range(plotData$Affect)
+therapy <- 2 # set therapy back for the next exercise
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 2.3: Therapy starts in week 5
+
+Real clients are often observed for a while before therapy starts. In the code below, the therapy push switches on at week 5. The code is complete: it keeps track of the time at every small step and sets `therapyOn` to 1 from `therapyStart` onwards (0 before), so the push `therapy * therapyOn` is either the full push or nothing.
+
+a. **Predict first:** sketch what affect does for both clients between week 0 and week 20.
+
+b. Run the code. Why is affect completely flat before week 5? Use the rule $\frac{dy}{dt} = A\,(y - \mu) + T\cdot\text{therapyOn}$ to explain.
+
+c. Right after week 5, how fast does affect rise (in affect units per week)? Is that the same for both clients? Why does the rise slow down later on?
+
+```{r ex-2-3, eval = SOLN}
+therapyStart <- 5 #week in which therapy starts
+
+simulateAffect <- function(Nsteps, baseline){
+  Nobs <- length(times)
+  Affect <- rep(NA, Nobs)
+  for(i in 1:Nobs){
+    if(i == 1) Affect[i] <- baseline
+    else{
+      AffectState <- Affect[i-1]
+      dt <- (times[i] - times[i-1]) / Nsteps
+      for(stepi in 1:Nsteps){
+        currentTime <- times[i-1] + (stepi - 1) * dt #time at the start of this small step
+        therapyOn <- as.numeric(currentTime >= therapyStart) #1 during therapy, 0 before
+        dAffect <- A*(AffectState - baseline) + therapy*therapyOn #pull to own baseline + therapy push
+        AffectState <- AffectState + dAffect * dt
+      }
+      Affect[i] <- AffectState
+    }
+  }
+  Affect
+}
+
+plotData <- rbind(
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 3), Person = "baseline 3"),
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 20), Person = "baseline 20")
+)
+
+ggplot(plotData, aes(x = Time, y = Affect, colour = Person)) +
+  geom_vline(xintercept = therapyStart, linetype = "dashed") + #start of therapy
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect", colour = "Person")
+```
+
+d. Affect is measured once a week, but in the model therapy can start at *any* moment. Suppose the first session is on a Wednesday, halfway between two measurements. Set `therapyStart` to 5.5 and compare affect at week 6 and at week 20 with the start at week 5. Could a discrete-time model fitted to the weekly measurements represent a therapy that starts halfway between two observations?
+
+```{r ex-2-3d, eval = SOLN}
+therapyStart <- ___
+start55 <- simulateAffect(manySteps, baseline = 3)
+therapyStart <- 5 # set back to week 5
+start5 <- simulateAffect(manySteps, baseline = 3)
+round(data.frame(Time = times, start5 = start5, start55 = start55)[times %in% c(5, 6, 20), ], 2)
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+---
+
+## Part 3: Therapy ends
+
+Now therapy stops at week 15. We follow the clients until week 30 to see what happens afterwards.
+
+### Exercise 3.1: Switch therapy off
+
+The code is the same as before, except that `therapyOn` is now 1 only from `therapyStart` up to `therapyEnd`.
+
+a. **Predict first:** what happens to affect after week 15? Where does it end up?
+
+b. Run the code and check your prediction.
+
+c. After week 15 the rule is the same as before week 5: there is no therapy push. Yet before week 5 affect did not change at all, and after week 15 it does. Why?
+
+```{r ex-3-1, eval = SOLN}
+times <- seq(from = 0, to = 30, by = 1) #follow clients until week 30
+therapyStart <- 5 #week in which therapy starts
+therapyEnd <- 15 #week in which therapy ends
+
+simulateAffect <- function(Nsteps, baseline){
+  Nobs <- length(times)
+  Affect <- rep(NA, Nobs)
+  for(i in 1:Nobs){
+    if(i == 1) Affect[i] <- baseline
+    else{
+      AffectState <- Affect[i-1]
+      dt <- (times[i] - times[i-1]) / Nsteps
+      for(stepi in 1:Nsteps){
+        currentTime <- times[i-1] + (stepi - 1) * dt
+        therapyOn <- as.numeric(currentTime >= therapyStart & currentTime < therapyEnd) #1 during therapy, 0 before and after
+        dAffect <- A*(AffectState - baseline) + therapy*therapyOn
+        AffectState <- AffectState + dAffect * dt
+      }
+      Affect[i] <- AffectState
+    }
+  }
+  Affect
+}
+
+plotData <- rbind(
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 3), Person = "baseline 3"),
+  data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 20), Person = "baseline 20")
+)
+
+ggplot(plotData, aes(x = Time, y = Affect, colour = Person)) +
+  geom_vline(xintercept = c(therapyStart, therapyEnd), linetype = "dashed") + #start and end of therapy
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect", colour = "Person")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 3.2: Strong versus weak pull
+
+Run the simulation for one person (baseline 3) with three values of $A$: $-0.05$, $-0.2$ and $-0.5$. Keep $T = 2$ and therapy from week 5 to 15.
+
+a. **Predict first:** with which $A$ will the client gain most during therapy? With which $A$ will the gains last longest afterwards?
+
+b. Run the code and check.
+
+c. What could $A$ mean psychologically for a client? What would it imply for a client whose $A$ is close to 0?
+
+```{r ex-3-2, eval = SOLN}
+plotData <- NULL
+for (Aval in c(-0.05, -0.2, -0.5)) {
+  A <- Aval #the function uses the A in the workspace
+  plotData <- rbind(plotData,
+    data.frame(Time = times, Affect = simulateAffect(manySteps, baseline = 3), A = factor(Aval)))
+}
+A <- -0.2 # set A back
+
+ggplot(plotData, aes(x = Time, y = Affect, colour = A)) +
+  geom_vline(xintercept = c(therapyStart, therapyEnd), linetype = "dashed") +
+  geom_line() + geom_point() +
+  theme_bw(base_size = 16) +
+  labs(x = "Time (weeks)", y = "Affect", colour = "A")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+### Exercise 3.3 (discussion): Making gains last
+
+In this model, every gain disappears once therapy ends. Most therapies aim for the opposite.
+
+a. Which part of the model would have to change so that gains remain after therapy? Explain in one or two sentences.
+
+b. **Challenge:** let the baseline itself change during therapy, with $\frac{d\mu}{dt} = c \cdot \text{therapyOn}$ (for example $c = 0.3$ per week). Implement this in the simulation. *Hint:* the baseline is now a second state that you update in every small step, just like `AffectState`.
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
