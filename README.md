@@ -16,7 +16,7 @@ Each week, the slides are uploaded after the lecture, together with the scripts 
 | [4](Lecture04) | Continuous time | Change as a rule ($dy/dt$), simulated in small steps (Euler method) |
 | [5](Lecture05) | State dependence | Equilibria, baselines and the pull back to them; a model of therapy |
 | [6](Lecture06) | Noise | Process noise versus measurement noise; fitting models with `ctsem` |
-| [7](Lecture07) | Coupling | When one person's state drives another's change; shared shocks; moderators |
+| [7](Lecture07) | Coupling | When one person's state drives another's change; shared shocks |
 | [8](Lecture08) | Time-dependent predictors | Switching influences on and off over time; thresholds |
 | [9](Lecture09) | Shocks | Transient, persistent, dissipative and cumulative shocks; damped oscillations |
 | [10](Lecture10) | Case studies | Applying everything to a real decision problem |
