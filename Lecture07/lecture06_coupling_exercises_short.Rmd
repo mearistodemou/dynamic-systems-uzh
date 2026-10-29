@@ -1,0 +1,227 @@
+---
+title: "Lecture 7 exercises (short): Albert and his rabbit"
+subtitle: "Dynamic Systems Thinking in Psychology"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+---
+
+```{r setup, include = FALSE}
+SOLN <- FALSE # exercise chunks are not run when knitting; run them yourself
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 9, fig.height = 4.5, out.width = "100%")
+library(ggplot2)
+```
+
+## What you will do
+
+Albert now has a partner, a rabbit, and the rabbit's mood gets into Albert's rule for change:
+
+$$
+\frac{d}{dt}\begin{pmatrix}\eta_1\\ \eta_2\end{pmatrix} =
+\begin{pmatrix}A_1 & A_{cross_{12}}\\ A_{cross_{21}} & A_2\end{pmatrix}
+\begin{pmatrix}\eta_1\\ \eta_2\end{pmatrix} +
+\begin{pmatrix}B_1\\ B_2\end{pmatrix}
+$$
+
+with $\eta_1$ = Albert and $\eta_2$ = the rabbit (Exercise 1 leaves out the noise; Exercise 2 adds it). We use $A_1 = -0.6$, $A_2 = -0.4$, $A_{cross_{12}} = 1$ and $A_{cross_{21}} = 0$. Both rest at affect 5. Time is in days.
+
+There are two exercises and a bonus question. When an exercise says **Predict first**, write down or sketch your prediction *before* running the code.
+
+**Run this chunk first.** It contains the simulation: the same small-step method we've been using so far, now with two states that are updated together. The only thing you need to change in this sheet is the measurement interval `Dt` in Exercise 2.
+
+```{r simulation}
+times <- seq(from = 0, to = 20, by = 0.1) #time points (days)
+Nsteps <- 10 #number of small steps between two time points
+A1 <- -0.6 #Albert's own pull
+A2 <- -0.4 #the rabbit's own pull
+A12 <- 1 #effect of the rabbit on Albert (A_cross12)
+A21 <- 0 #effect of Albert on the rabbit (A_cross21)
+rest <- c(5, 5) #resting levels of Albert and the rabbit
+
+simulateCouple <- function(startAlbert, startRabbit){
+  B1 <- -(A1*rest[1] + A12*rest[2]) #intercepts chosen so that both rest at 'rest'
+  B2 <- -(A21*rest[1] + A2*rest[2])
+  Nobs <- length(times)
+  Albert <- Rabbit <- rep(NA, Nobs)
+  Albert[1] <- startAlbert; Rabbit[1] <- startRabbit
+  for(i in 2:Nobs){
+    AlbertState <- Albert[i-1]; RabbitState <- Rabbit[i-1]
+    dt <- (times[i] - times[i-1]) / Nsteps
+    for(stepi in 1:Nsteps){
+      dAlbert <- A1*AlbertState + A12*RabbitState + B1 #Albert's slope (row 1 of the matrix)
+      dRabbit <- A21*AlbertState + A2*RabbitState + B2 #the rabbit's slope (row 2 of the matrix)
+      AlbertState <- AlbertState + dAlbert * dt
+      RabbitState <- RabbitState + dRabbit * dt
+    }
+    Albert[i] <- AlbertState; Rabbit[i] <- RabbitState
+  }
+  data.frame(Time = times, Albert = Albert, Rabbit = Rabbit)
+}
+
+plotCouple <- function(sim){ #plot Albert and the rabbit in one figure
+  long <- rbind(data.frame(Time = sim$Time, Affect = sim$Albert, Who = "Albert"),
+                data.frame(Time = sim$Time, Affect = sim$Rabbit, Who = "Rabbit"))
+  ggplot(long, aes(x = Time, y = Affect, colour = Who)) +
+    geom_hline(yintercept = rest, linetype = "dashed", colour = "grey60") +
+    geom_line(linewidth = 1.2) +
+    scale_colour_manual(values = c(Albert = "#2a78d6", Rabbit = "#7a4fb5")) +
+    theme_bw(base_size = 16) +
+    labs(x = "Time (days)", y = "Affect", colour = NULL)
+}
+```
+
+---
+
+## Exercise 1: Two bad days
+
+A "bad day" means that someone starts at affect 1 instead of 5.
+
+a. **Predict first:** sketch Albert and the rabbit over 20 days when (i) the rabbit has a bad day, and (ii) Albert has a bad day.
+
+b. Run the code and compare with your sketches.
+
+c. Which entry of the matrix makes (i) and (ii) look so different?
+
+```{r ex-1, eval = SOLN}
+plotCouple(simulateCouple(startAlbert = 5, startRabbit = 1)) + ggtitle("(i) the rabbit has a bad day")
+plotCouple(simulateCouple(startAlbert = 1, startRabbit = 5)) + ggtitle("(ii) Albert has a bad day")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+---
+
+## Exercise 2: How often you measure
+
+Many studies measure a couple's affect using some $\Delta t$ (every few hours, every day, every week) and then run a **cross-lagged regression**: Albert at the *next* measurement, predicted from Albert and the rabbit at *this* measurement:
+
+$$\text{AlbertNext} = c + a_{11}\,\text{AlbertNow} + a_{12}\,\text{RabbitNow}$$
+
+The coefficient $a_{12}$ of RabbitNow is the **cross-lagged effect** of the rabbit on Albert. We will do exactly what such a study does.
+
+First run the chunk below. It simulates Albert's and the rabbit's moods over a very long time, with random kicks as in Lecture 6. Think of it as their real life, which no study ever sees completely.
+
+```{r ex-2-life, eval = SOLN}
+G1 <- 0.4; G2 <- 1.2 #size of the random kicks: Albert small, rabbit large
+dtSim <- 0.025 #tiny step (days)
+lifeDays <- 40000 #a very long life, so the regression results are precise
+nSim <- lifeDays / dtSim
+B1 <- -(A1*rest[1] + A12*rest[2]); B2 <- -(A21*rest[1] + A2*rest[2]) #both rest at 5
+set.seed(606)
+kick1 <- rnorm(nSim); kick2 <- rnorm(nSim) #all random kicks, drawn in advance
+lifeAlbert <- lifeRabbit <- rep(5, nSim + 1)
+for (k in 1:nSim) {
+  dAlbert <- A1*lifeAlbert[k] + A12*lifeRabbit[k] + B1 #same rule as before ...
+  dRabbit <- A21*lifeAlbert[k] + A2*lifeRabbit[k] + B2
+  lifeAlbert[k+1] <- lifeAlbert[k] + dAlbert*dtSim + G1*sqrt(dtSim)*kick1[k] #... plus a random kick
+  lifeRabbit[k+1] <- lifeRabbit[k] + dRabbit*dtSim + G2*sqrt(dtSim)*kick2[k]
+}
+```
+
+Now the study. The chunk below measures both every `Dt` days, puts each measurement next to Albert's next measurement, and runs the regression.
+
+a. **Predict first:** the coupling in the model is $A_{cross_{12}} = 1$. Will the regression find the same cross-lagged effect whether you measure every 3 hours, every day or every week?
+
+b. Run the chunk with `Dt <- 1`, then change it to `0.125` (every 3 hours) and `7` (once a week). Write down the coefficient of `RabbitNow` each time.
+
+```{r ex-2-study, eval = SOLN}
+Dt <- 2 #measurement interval (days): try 1, 0.125 and 7
+
+measured <- seq(from = 1, to = nSim + 1, by = round(Dt / dtSim)) #which moments the study sees
+Albert <- lifeAlbert[measured]
+Rabbit <- lifeRabbit[measured]
+N <- length(Albert)
+
+study <- data.frame(AlbertNow  = Albert[-N], #each row: this measurement ...
+                    RabbitNow  = Rabbit[-N],
+                    AlbertNext = Albert[-1]) #... and Albert at the next measurement
+head(round(study, 2))
+
+fit <- lm(AlbertNext ~ AlbertNow + RabbitNow, data = study)
+round(coef(fit), 2) #RabbitNow = the cross-lagged effect
+```
+
+c. The chunk below repeats the same study for many intervals, from 3 hours to 2 weeks, and plots the cross-lagged effect for each. At which interval is it largest?
+
+d. Three groups study this couple: group A every 3 hours, group B daily, group C weekly. Group C writes "the rabbit hardly affects Albert", group B writes "the rabbit strongly affects Albert". Who is right?
+
+```{r ex-2-curve, eval = SOLN}
+intervals <- c(0.125, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 10, 14) #measurement intervals (days)
+crossLagged <- rep(NA, length(intervals))
+for (i in seq_along(intervals)) { #the same study as above, once for every interval
+  measured <- seq(from = 1, to = nSim + 1, by = round(intervals[i] / dtSim))
+  Albert <- lifeAlbert[measured]
+  Rabbit <- lifeRabbit[measured]
+  N <- length(Albert)
+  study <- data.frame(AlbertNow = Albert[-N], RabbitNow = Rabbit[-N], AlbertNext = Albert[-1])
+  crossLagged[i] <- coef(lm(AlbertNext ~ AlbertNow + RabbitNow, data = study))["RabbitNow"]
+}
+
+ggplot(data.frame(interval = intervals, crossLagged = crossLagged), aes(x = interval, y = crossLagged)) +
+  geom_line(linewidth = 1.2, colour = "#2a78d6") +
+  geom_point(size = 3, colour = "#2a78d6") +
+  theme_bw(base_size = 16) +
+  labs(x = "measurement interval (days)", y = "cross-lagged effect (RabbitNow)")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
+
+---
+
+## Bonus: Design the cheapest study
+
+Measurements cost money and participants' patience. Suppose you can afford **12 measurements** per couple, and you want to find out whether the rabbit affects Albert. You are free to choose how far apart the 12 measurements are.
+
+The chunk below runs many such small studies for each interval: it measures the simulated life every `Dt` days, cuts it into separate studies of 12 measurements, runs the same cross-lagged regression in each study, and counts how often the `RabbitNow` coefficient is significant ($p < .05$). That proportion is the **power** of the design.
+
+a. **Predict first:** at which interval will a 12-measurement study find the rabbit's effect most often? At 2 days, where the cross-lagged effect is largest?
+
+b. Run the chunk. Which interval has the highest power?
+
+c. Why is the best interval not the one with the largest cross-lagged effect? *Hint:* besides the rabbit's push, what else happens to Albert between two measurements, and what happens to that when the interval gets longer?
+
+```{r bonus, eval = SOLN}
+Nbudget <- 12 #measurements per study
+intervals <- c(0.125, 0.25, 0.5, 1, 2, 4, 7) #measurement intervals (days)
+power <- rep(NA, length(intervals))
+for (i in seq_along(intervals)) {
+  measured <- seq(from = 1, to = nSim + 1, by = round(intervals[i] / dtSim)) #measure the whole life every Dt ...
+  Albert <- lifeAlbert[measured]
+  Rabbit <- lifeRabbit[measured]
+  nStudies <- min(400, floor(length(Albert) / Nbudget)) #... and cut it into separate studies of 12 measurements
+  found <- rep(NA, nStudies)
+  for (s in 1:nStudies) {
+    rows <- ((s - 1) * Nbudget + 1):(s * Nbudget) #the 12 measurements of study s
+    a <- Albert[rows]; r <- Rabbit[rows]
+    study <- data.frame(AlbertNow = a[-Nbudget], RabbitNow = r[-Nbudget], AlbertNext = a[-1])
+    pValue <- summary(lm(AlbertNext ~ AlbertNow + RabbitNow, data = study))$coefficients["RabbitNow", "Pr(>|t|)"]
+    found[s] <- pValue < 0.05 #did this study find the effect?
+  }
+  power[i] <- mean(found) #proportion of studies that found it
+}
+
+ggplot(data.frame(interval = intervals, power = power), aes(x = interval, y = power)) +
+  geom_line(linewidth = 1.2, colour = "#eb6834") +
+  geom_point(size = 3, colour = "#eb6834") +
+  scale_x_log10(breaks = intervals, labels = c("3h", "6h", "12h", "1d", "2d", "4d", "1w")) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_bw(base_size = 16) +
+  labs(x = "measurement interval (log scale)", y = "power (12 measurements)")
+```
+
+**Your answer:**
+
+&nbsp;
+
+&nbsp;
