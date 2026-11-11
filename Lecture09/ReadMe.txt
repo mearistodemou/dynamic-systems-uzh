@@ -1,6 +1,8 @@
-Transient shock (example 1): TransientShock_W9.R
-Persistent shock (example 2): PersistentShock_W9.R
-Dissipative shock (example 3): PersistentShock_W9.R (change AM < 0)
-Cumulative shock (example 4): PersistentShock_W9.R (change AM > 0)
-Dampening oscillator (example 5): DampedOsc_Shock_W9.R
+# ----------------------------------
+# Materials for week 9: 12.11.2026
+# ----------------------------------
 
+# 1. Slides: DSTP_W9_Predictors.pptx
+# 2. Script for time-independent predictor of level (additive): lecture07_simulate_level.R
+# 3. Script for time-independent predictor of state-dependence (multiplicative): lecture07_simulate_statedependence.R
+# 4. Script for time-independent predictor of diffusion (multiplicative): lecture07_simulate_kicks.R
