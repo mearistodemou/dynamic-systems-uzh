@@ -2,7 +2,7 @@
 # Materials for week 9: 12.11.2026
 # ----------------------------------
 
-# 1. Slides: DSTP_W9_Predictors.pptx
+# 1. Slides: DSTP_W9_Predictors_12112026.pptx
 
 # -------------------------------------------------------------------------
 # Time-independent predictor scripts (individual differences - exercise 1)
