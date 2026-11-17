@@ -1,8 +1,8 @@
-##########################################
-# Adding random protein input (snacking)
+#######################################
+# Adding the lavender consumption
 # Michael E. Aristodemou
-# Week 10: 20.11.2025
-##########################################
+# Week 11: 20.11.2025
+#######################################
 
 ## --- Preamble ------------------------------------------------------------
 # install package if it is missing
@@ -40,16 +40,6 @@ Al = 0.05 # accumulation of allergens with repeated lavender eating
 lavStart <- times[ceiling(length(times)/3.5)]  # start at ~1/3.5 of time window
 lavEnd   <- times[floor(length(times)/3)]      # end at ~1/3 of time window
 
-# Random protein input
-Walks <- 6 # increase the probability of snacking (e.g. going on more walks to the park)
-# Sample from a binomial distribution with prob based on number of walks
-snacking <- lapply(Walks, function(t) rbinom(n = Nobs, size = 1, prob = t / 20))
-# Compute the average amount of snacking across days
-snack_mean <- sapply(snacking, mean)
-# scale effect of snacking
-AS = 1 # amount of protein intake
-k = 10 # absorption rate
-
 # Starting amount of allergens in system
 initialAllergen <- rnorm(n = NSubjects, mean = 0, sd = 0)
 
@@ -63,7 +53,6 @@ row <- 0 #initialize row counter, to track which row of the data.frame we are on
 for(subi in 1:NSubjects){
   for(obsi in 1:Nobs){ #for each observation of a subject
     row <- row + 1
-    snack_val <- snacking[[subi]][obsi]
     if(obsi==1){
       AllergenState <- initialAllergen[subi] #if first time point, set to initial affect
       InputState <- Pinput # initialize latent input process
@@ -74,19 +63,14 @@ for(subi in 1:NSubjects){
         # Compute intervention effect
         dInput <- AM*InputState # deterministic slope of our intervention at earlier time point
         dLavender <- Al*LavenderState
-        if (times[obsi] > inputTime) {
-          dSnack <- k * (AS * snack_val - InputState)
-        } else {
-          dSnack <- 0
-        }
         if(times[obsi]==inputTime) dInput <- dInput + Pelim # add input effect if intervention time
         if(times[obsi]==lavStart) dLavender <- dLavender + Linput
         if(times[obsi]>=lavEnd) dLavender <- dLavender*-5
-        InputState <- InputState + dInput * 1/Nsteps + dSnack * 1/Nsteps # update state using slope and time step
+        InputState <- InputState + dInput * 1/Nsteps # update state using slope and time step
         LavenderState <- LavenderState + dLavender * 1/Nsteps # update state using slope and time step
         
         # Compute Affect state
-        dAllergen <- A1*AllergenState + InputState + LavenderState # deterministic slope at earlier time point
+        dAllergen <- A1*AllergenState + (InputState) + LavenderState # deterministic slope at earlier time point
         AllergenState <- AllergenState + dAllergen * 1/Nsteps + # update state using slope and time step
           G * rnorm(n=1, mean=0, sd=sqrt(1/Nsteps)) # and add system noise
       }
@@ -98,13 +82,12 @@ for(subi in 1:NSubjects){
     data$LavInput <- ifelse(data$Time == lavStart, 1, 0) #input effect data
     data$InputState[row] <- InputState #input latent intervention process data
     data$LavenderState[row] <- LavenderState #input latent intervention process data
-    data$Snack[row] <- snack_val
   }
 }
 
 data$Allergen <- data$Allergen + rnorm(n=nrow(data), mean = 0, sd = 0) #add measurement error
 
-# -- plots ---------------------------------------------------------
+# -- plots -------------
 plot_data <- data %>%
   select(Subject, Time, Allergen, InputState, LavenderState) %>%
   pivot_longer(c(Allergen, InputState, LavenderState),
@@ -128,6 +111,3 @@ p1 <- ggplot(plot_data, aes(x = Time, y = Value, color = Series)) +
   theme(legend.position = "none") +
   labs(x = "Time (Days)", y = NULL)
 p1
-
-ggsave("~\\UZH\\Course\\Visualization\\case_p3_w10.png", plot = p1,
-       dpi = 300, width = 14, height = 10)

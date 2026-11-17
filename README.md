@@ -19,7 +19,8 @@ Each week, the slides are uploaded after the lecture, together with the scripts 
 | [7](Lecture07) | Coupling | When one person's state drives another's change; shared shocks |
 | [8](Lecture08) | Time-dependent predictors | Switching influences on and off over time; thresholds |
 | [9](Lecture09) | Shocks | Transient, persistent, dissipative and cumulative shocks; damped oscillations |
-| [10](Lecture10) | Case studies | Applying everything to a real decision problem |
+| [10](Lecture10) | To be announced | |
+| [11](Lecture11) | Case studies | Applying everything to a real decision problem |
 
 ## What is in each folder
 
