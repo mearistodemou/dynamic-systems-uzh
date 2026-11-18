@@ -18,8 +18,8 @@ Each week, the slides are uploaded after the lecture, together with the scripts 
 | [6](Lecture06) | Noise | Process noise versus measurement noise; fitting models with `ctsem` |
 | [7](Lecture07) | Coupling | When one person's state drives another's change; shared shocks |
 | [8](Lecture08) | Time-dependent predictors | Switching influences on and off over time; thresholds |
-| [9](Lecture09) | Shocks | Transient, persistent, dissipative and cumulative shocks; damped oscillations |
-| [10](Lecture10) | To be announced | |
+| [9](Lecture09) | Predictors | Time-independent predictors of level, state dependence and kicks; thresholds and hysteresis |
+| [10](Lecture10) | Shocks | Shocks as processes with their own rate of change: transient, dissipative, persistent, cumulative and oscillating shocks |
 | [11](Lecture11) | Case studies | Applying everything to a real decision problem |
 
 ## What is in each folder
