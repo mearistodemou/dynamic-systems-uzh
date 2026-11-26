@@ -20,7 +20,8 @@ Each week, the slides are uploaded after the lecture, together with the scripts 
 | [8](Lecture08) | Time-dependent predictors | Switching influences on and off over time; thresholds |
 | [9](Lecture09) | Predictors | Time-independent predictors of level, state dependence and kicks; thresholds and hysteresis |
 | [10](Lecture10) | Shocks | Shocks as processes with their own rate of change: transient, dissipative, persistent, cumulative and oscillating shocks |
-| [11](Lecture11) | Case studies | Applying everything to a real decision problem |
+| [11](Lecture11) | Simulating in R | A question-and-answer guide to simulating every model of the course: find what you want to change, and copy a complete, working script |
+| [12](Lecture12) | Case studies | Applying everything to a real decision problem |
 
 ## What is in each folder
 
@@ -30,6 +31,8 @@ Every `LectureXX` folder contains:
 - **R scripts** (`.R`) used in the lecture, to simulate and plot the models
 - **Exercise sheets** (`.Rmd` or `.qmd`) for the in-class exercises
 - A **ReadMe** listing which file is which
+
+[Week 11](Lecture11) contains the **simulation guide**, as an R Markdown file (`.Rmd`) and as a finished web page (`.html`). To read the guide, download the `.html` file and open it in your web browser (GitHub only shows its source code). Use the guide while you write your report: look up what you want to do (for example *add more participants* or *add a third construct*), and copy the complete script that goes with it.
 
 The [Assessment](Assessment) folder contains information about how the course is assessed.
 
